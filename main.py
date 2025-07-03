@@ -1,0 +1,106 @@
+from pubmed_scraper import PubMedClient
+from dotenv import load_dotenv
+import os
+
+# Updated usage example
+if __name__ == "__main__":
+
+    # Load environment variables from .env file
+    load_dotenv()
+
+    email = os.getenv(
+        "EMAIL"
+    )  # Ensure you have set the EMAIL variable in your .env file
+    if not email:
+        raise ValueError(
+            "EMAIL environment variable is not set. Please set it in your .env file."
+        )
+
+    pubmed_client = PubMedClient(email=email, base_dir="articles_data")
+    query = "protein AND (aggregation OR amyloid OR fibril) AND (temperature OR pH OR (environmental conditions)) AND ThT"
+
+    # Search for articles
+    # pmids = pubmed_client.search_pubmed(query, retmax=20)
+    # print(f"Found {len(pmids)} articles for query '{query}':\n {pmids}")
+
+    # pmids = pubmed_client.load_pmids_from_json(
+    #     "/home/jeremy_h/projects/protein_aggregation_predictor/unique_pmids.json"
+    # )
+
+    pmids = ["38937578", "11106582"]
+
+    articles = []
+    for pmid in pmids:
+        print(f"Fetching details for PMID: {pmid}")
+
+        # Get complete article data
+        article = pubmed_client.get_full_article(pmid)
+        articles.append(article)
+
+        # Print article content
+        print(f"Title: {article.title}")
+        print(f"Content: {article.content[:500]}...")  # Show first 500 chars
+
+        # Save article metadata to JSON in the unified folder structure
+        json_path = pubmed_client.save_article_to_json(article)
+        print(f"Saved metadata to: {json_path}")
+
+        # Get and download figures from the article
+        print(f"Extracting figures for PMID: {pmid}")
+        figures = pubmed_client.get_article_figures(pmid)
+
+        if figures:
+            print(f"Found {len(figures)} figures")
+
+            # Save figures metadata to JSON
+            figures_json_path = pubmed_client.save_figures_to_json(figures, pmid)
+            print(f"Saved figures metadata to: {figures_json_path}")
+
+            for i, figure in enumerate(figures):
+                print(f"Figure {i+1}:")
+                print(f"  URL: {figure.url}")
+                print(f"  Alt text: {figure.alt}")
+                print(f"  Caption: {figure.caption}")
+
+                # Download the image to the unified folder structure
+                if figure.url:
+                    # Extract file extension from URL or use .jpg as default
+                    file_ext = (
+                        figure.url.split(".")[-1]
+                        if "." in figure.url.split("/")[-1]
+                        else "jpg"
+                    )
+                    filename = f"figure_{i+1}.{file_ext}"
+
+                    print(f"  Downloading figure {i+1}...")
+                    downloaded_path = pubmed_client.download_image(
+                        figure.url, filename, pmid
+                    )
+
+                    if downloaded_path:
+                        print(f"  ✓ Successfully downloaded: {downloaded_path}")
+                    else:
+                        print(f"  ✗ Failed to download image")
+                print()
+        else:
+            print("No figures found for this article")
+
+        # =================================================================================================
+        # article.content will be used here by a local LLM for processing information into a json file
+        # =================================================================================================
+
+        # Download PDF if available
+        if article.pmcid:  # only try if we actually have a PMCID
+            print(f"Downloading PDF for PMCID: {article.pmcid}")
+            try:
+                pubmed_client.download_pdf_from_pmcid(article.pmcid, pmid)
+                print(f"✓ PDF download initiated for {article.pmcid}")
+            except Exception as e:
+                print(f"✗ Failed to download PDF for {article.pmcid}: {e}")
+        else:
+            print(f"{pmid} has no PMCID – skipping PDF download")
+
+        # Print article information
+        print(f"PMID: {article.pmid}")
+        print(f"PMCID: {article.pmcid or 'Not available'}")
+        print("-" * 80)

@@ -1,0 +1,11 @@
+__pycache__
+*.json
+.env
+articles_data/
+*.tsv
+*.ipynb
+*.csv
+*.jpg
+*.png
+*.pdf
+*.svg
