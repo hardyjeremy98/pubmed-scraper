@@ -19,20 +19,6 @@ literature_search_utils/
 ├── main.py                      # Main execution script
 ├── pubmed_scraper.py           # Core scraping functionality
 ├── requirements.txt            # Python dependencies
-├── literature_search.ipynb    # Jupyter notebook for interactive exploration
-├── convert_pdf_to_images.ipynb # PDF to image conversion utilities
-├── .env                        # Environment variables (not tracked)
-├── articles_data/              # Downloaded content storage
-│   └── {pmid}/                 # Individual article folders
-│       ├── {pmid}_metadata.json
-│       ├── {pmid}_figures.json
-│       ├── PMC{pmcid}.pdf
-│       └── images/
-│           ├── figure_1.svg
-│           ├── figure_2.jpg
-│           └── ...
-└── unfetched_pmcids.tsv       # Tracking file for failed downloads
-```
 
 ## Installation
 
