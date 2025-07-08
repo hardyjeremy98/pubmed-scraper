@@ -1,4 +1,5 @@
 from pubmed_scraper import PubMedClient
+from figure_scanner import scan_article_figures_for_keywords
 from dotenv import load_dotenv
 import os
 
@@ -66,14 +67,45 @@ if __name__ == "__main__":
             figures_json_path = pubmed_client.save_figures_to_json(figures, pmid)
             print(f"Saved figures metadata to: {figures_json_path}")
 
+            # Scan figures for ThT/Thioflavin keywords
+            print(f"\nScanning figures for relevant keywords...")
+            scan_result = scan_article_figures_for_keywords(
+                figures, pmid=pmid, verbose=True
+            )
+
+            # Decide whether to continue processing based on scan results
+            if scan_result.has_relevant_figures:
+                print(
+                    f"✓ Article contains relevant figures - proceeding with download and processing"
+                )
+                should_process = True
+            else:
+                print(
+                    f"✗ No relevant figures found - you may want to skip detailed processing"
+                )
+                should_process = False
+                # Note: You can still continue processing if needed, this is just a flag
+
             for i, figure in enumerate(figures):
                 print(f"Figure {i+1}:")
                 print(f"  URL: {figure.url}")
                 print(f"  Alt text: {figure.alt}")
-                print(f"  Caption: {figure.caption}")
+                print(
+                    f"  Caption: {figure.caption[:100]}{'...' if len(figure.caption) > 100 else ''}"
+                )
+
+                # Check if this specific figure was flagged as relevant
+                figure_number = i + 1
+                if figure_number in scan_result.relevant_figure_numbers:
+                    keywords_found = scan_result.keyword_matches[figure_number]
+                    print(
+                        f"  🎯 RELEVANT: Contains keywords: {', '.join(keywords_found)}"
+                    )
 
                 # Download the image to the unified folder structure
-                if figure.url:
+                if (
+                    figure.url and should_process
+                ):  # Only download if flagged as relevant
                     # Extract file extension from URL or use .jpg as default
                     file_ext = (
                         figure.url.split(".")[-1]
@@ -91,6 +123,8 @@ if __name__ == "__main__":
                         print(f"  ✓ Successfully downloaded: {downloaded_path}")
                     else:
                         print(f"  ✗ Failed to download image")
+                elif figure.url and not should_process:
+                    print(f"  ⏸️ Skipping download (no relevant keywords found)")
                 print()
         else:
             print("No figures found for this article")
