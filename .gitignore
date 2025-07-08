@@ -9,3 +9,5 @@ articles_data/
 *.png
 *.pdf
 *.svg
+model_cache/
+main_old.py

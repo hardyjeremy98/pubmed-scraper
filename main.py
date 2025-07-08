@@ -27,25 +27,35 @@ if __name__ == "__main__":
     #     "/home/jeremy_h/projects/protein_aggregation_predictor/unique_pmids.json"
     # )
 
-    pmids = ["38937578", "11106582"]
+    pmids = ["38937578"]
+    # "11106582"
 
     articles = []
+
     for pmid in pmids:
         print(f"Fetching details for PMID: {pmid}")
 
-        # Get complete article data
+        # Get complete article data (now includes HTML content automatically)
         article = pubmed_client.get_full_article(pmid)
         articles.append(article)
 
         # Print article content
         print(f"Title: {article.title}")
-        print(f"Content: {article.content[:500]}...")  # Show first 500 chars
+        print(f"Content: {article.content}")  # Show first 500 chars
 
         # Save article metadata to JSON in the unified folder structure
         json_path = pubmed_client.save_article_to_json(article)
         print(f"Saved metadata to: {json_path}")
 
-        # Get and download figures from the article
+        # Save HTML content if available (now cached in article object)
+        if article.html_content:
+            html_path = pubmed_client.save_article_html(article.html_content, pmid)
+            if html_path:
+                print(f"Saved HTML content to: {html_path}")
+        else:
+            print(f"No HTML content available for PMID: {pmid}")
+
+        # Get and download figures from the article (uses cached HTML)
         print(f"Extracting figures for PMID: {pmid}")
         figures = pubmed_client.get_article_figures(pmid)
 
@@ -86,7 +96,10 @@ if __name__ == "__main__":
             print("No figures found for this article")
 
         # =================================================================================================
-        # article.content will be used here by a local LLM for processing information into a json file
+        # LLM Processing Section:
+        # - article.content: Contains the full text or abstract
+        # - article.html_content: Contains the raw HTML from PMC (if available)
+        # - Both can be used by a local LLM for processing information into a structured JSON file
         # =================================================================================================
 
         # Download PDF if available
