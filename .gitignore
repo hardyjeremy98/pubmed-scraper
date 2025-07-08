@@ -11,3 +11,4 @@ articles_data/
 *.svg
 model_cache/
 main_old.py
+pubmed_scraper_old.py
