@@ -21,7 +21,7 @@ class ArticleManager:
 
         # Save article data
         with open(filepath, "w") as f:
-            json.dump(article.to_dict(), f, indent=2)
+            json.dump(article.to_dict(), f, indent=2, ensure_ascii=False)
         print(f"Saved article metadata to {filepath}")
         return filepath
 
@@ -30,19 +30,13 @@ class ArticleManager:
         figures: List[Figure], pmid: str, base_dir: str = "articles_data"
     ) -> str:
         """Save figures metadata to JSON file in the PMID-specific directory.
-        Only saves figures that have non-empty captions."""
+        All figures passed to this method should already have captions."""
         # Create PMID-specific directory
         pmid_dir = ensure_pmid_directory(pmid, base_dir)
 
         # Prepare figures data for JSON serialization
-        # Only include figures with non-empty captions
         figures_data = []
-        figure_counter = 1
-        for figure in figures:
-            # Skip figures without captions or with empty captions
-            if not figure.caption or not figure.caption.strip():
-                continue
-
+        for i, figure in enumerate(figures, 1):
             # Extract file extension from URL or use .jpg as default
             file_ext = (
                 figure.url.split(".")[-1] if "." in figure.url.split("/")[-1] else "jpg"
@@ -50,27 +44,22 @@ class ArticleManager:
 
             figures_data.append(
                 {
-                    "id": figure_counter,
+                    "id": i,
                     "url": figure.url,
                     "alt": figure.alt,
                     "caption": figure.caption,
-                    "local_filename": f"figure_{figure_counter}.{file_ext}",
+                    "local_filename": f"figure_{i}.{file_ext}",
                 }
             )
-            figure_counter += 1
 
         filename = f"{pmid}_figures.json"
         filepath = os.path.join(pmid_dir, filename)
 
         # Save figures data
         with open(filepath, "w") as f:
-            json.dump(figures_data, f, indent=2)
+            json.dump(figures_data, f, indent=2, ensure_ascii=False)
 
         print(f"Saved {len(figures_data)} figures with captions to {filepath}")
-        if len(figures_data) != len(figures):
-            print(
-                f"  Filtered out {len(figures) - len(figures_data)} figures without captions"
-            )
 
         return filepath
 

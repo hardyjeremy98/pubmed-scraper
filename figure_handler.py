@@ -8,7 +8,7 @@ from http_session import HTTPSession
 
 
 class ImageDownloader:
-    """Handles image downloading functionality."""
+    """Handles figure extraction and downloading functionality."""
 
     def __init__(self, http_session: HTTPSession, base_dir: str = "articles_data"):
         self.http_session = http_session
@@ -133,7 +133,8 @@ class ImageDownloader:
     def get_pmc_figures_from_html(
         self, html_content: str, pmc_url: str
     ) -> List[Figure]:
-        """Extract figures from already-fetched HTML content."""
+        """Extract figures from already-fetched HTML content.
+        Only returns figures that have captions."""
         try:
             soup = BeautifulSoup(html_content, "html.parser")
             figures = []
@@ -149,7 +150,8 @@ class ImageDownloader:
                 elif not src.startswith("http"):
                     src = urljoin(pmc_url, src)
 
-                if self._is_likely_protein_figure(img, src):
+                # Only process figures that are likely protein-related AND have captions
+                if self._is_likely_protein_figure(img, src) and self._has_caption(img):
                     figures.append(
                         Figure(
                             url=src,
@@ -197,3 +199,8 @@ class ImageDownloader:
         except Exception as e:
             print(f"Error downloading {img_url}: {e}")
             return None
+
+    def _has_caption(self, img_tag) -> bool:
+        """Check if the image has a non-empty caption."""
+        caption = self._extract_caption(img_tag)
+        return bool(caption and caption.strip())

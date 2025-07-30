@@ -2,11 +2,226 @@ import re
 import os
 import time
 import urllib
-from typing import List, Optional
+from typing import List, Optional, Set, Dict, Tuple
 import requests
 from bs4 import BeautifulSoup
+import fitz  # PyMuPDF
 from utils import ensure_pmid_directory
 from http_session import HTTPSession
+
+
+class PageExtractor:
+    """Extracts relevant pages from PDFs by scanning for figure references."""
+
+    def __init__(self, pdf_path: str):
+        """Initialize with path to PDF file.
+
+        Args:
+            pdf_path: Path to the PDF file to analyze
+        """
+        self.pdf_path = pdf_path
+        self.doc = None
+
+    def __enter__(self):
+        """Context manager entry - open PDF document."""
+        self.doc = fitz.open(self.pdf_path)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - close PDF document."""
+        if self.doc:
+            self.doc.close()
+
+    def get_relevant_pages(
+        self,
+        figure_labels: Optional[List[str]] = None,
+        padding: int = 0,
+        search_patterns: Optional[List[str]] = None,
+    ) -> Dict[str, List[int]]:
+        """Find pages containing specific figure references.
+
+        Args:
+            figure_labels: List of specific figure labels to search for (e.g., ["Figure 1", "Figure 6"])
+            padding: Number of pages before/after to include in results
+            search_patterns: Custom regex patterns to search for
+
+        Returns:
+            Dictionary mapping figure labels/patterns to lists of relevant page numbers (1-indexed)
+        """
+        if not self.doc:
+            raise ValueError(
+                "PDF document not opened. Use as context manager or call open_pdf() first."
+            )
+
+        results = {}
+
+        # Default patterns for common figure references
+        default_patterns = [
+            r"\bFig\.?\s*\d+",  # Fig. 1, Fig 2, etc.
+            r"\bFigure\s*\d+",  # Figure 1, Figure 2, etc.
+            r"\bTable\s*\d+",  # Table 1, Table 2, etc.
+        ]
+
+        patterns_to_search = []
+
+        # Add specific figure labels if provided
+        if figure_labels:
+            for label in figure_labels:
+                # Escape special regex characters and create flexible pattern
+                escaped_label = re.escape(label)
+                # Make it flexible for spacing and punctuation
+                flexible_pattern = escaped_label.replace(r"\ ", r"\s*").replace(
+                    r"\.", r"\.?"
+                )
+                patterns_to_search.append(flexible_pattern)
+                results[label] = []
+
+        # Add custom search patterns if provided
+        if search_patterns:
+            patterns_to_search.extend(search_patterns)
+            for pattern in search_patterns:
+                results[pattern] = []
+
+        # Add default patterns if no specific ones provided
+        if not figure_labels and not search_patterns:
+            patterns_to_search = default_patterns
+            for pattern in default_patterns:
+                results[pattern] = []
+
+        # Search through all pages
+        for page_num in range(len(self.doc)):
+            page = self.doc[page_num]
+            page_text = page.get_text()
+
+            for pattern in patterns_to_search:
+                matches = re.findall(pattern, page_text, re.IGNORECASE)
+                if matches:
+                    # Determine which result key to use
+                    if figure_labels and pattern in [
+                        re.escape(label).replace(r"\ ", r"\s*").replace(r"\.", r"\.?")
+                        for label in figure_labels
+                    ]:
+                        # Find the original label this pattern corresponds to
+                        for label in figure_labels:
+                            escaped_label = (
+                                re.escape(label)
+                                .replace(r"\ ", r"\s*")
+                                .replace(r"\.", r"\.?")
+                            )
+                            if pattern == escaped_label:
+                                result_key = label
+                                break
+                    else:
+                        result_key = pattern
+
+                    # Add page with padding
+                    start_page = max(0, page_num - padding)
+                    end_page = min(len(self.doc) - 1, page_num + padding)
+
+                    page_range = list(
+                        range(start_page + 1, end_page + 2)
+                    )  # Convert to 1-indexed
+
+                    # Avoid duplicates
+                    for p in page_range:
+                        if p not in results[result_key]:
+                            results[result_key].append(p)
+
+                    print(f"Found '{matches[0]}' on page {page_num + 1}")
+
+        # Sort page numbers for each result
+        for key in results:
+            results[key].sort()
+
+        return results
+
+    def extract_figure_pages(
+        self, figure_numbers: List[int], padding: int = 1
+    ) -> Dict[int, List[int]]:
+        """Extract pages containing specific figure numbers.
+
+        Args:
+            figure_numbers: List of figure numbers to search for
+            padding: Number of pages before/after to include
+
+        Returns:
+            Dictionary mapping figure numbers to lists of relevant page numbers (1-indexed)
+        """
+        # Create multiple patterns for each figure number to handle different formats
+        figure_labels = []
+        for num in figure_numbers:
+            figure_labels.extend(
+                [
+                    f"Figure {num}",
+                    f"Fig. {num}",
+                    f"Fig {num}",
+                    f"figure {num}",
+                    f"fig. {num}",
+                    f"fig {num}",
+                ]
+            )
+
+        results = self.get_relevant_pages(figure_labels, padding)
+
+        # Convert back to figure number keys by combining all matches for each number
+        figure_results = {}
+        for num in figure_numbers:
+            all_pages = []
+            patterns_for_num = [
+                f"Figure {num}",
+                f"Fig. {num}",
+                f"Fig {num}",
+                f"figure {num}",
+                f"fig. {num}",
+                f"fig {num}",
+            ]
+
+            for pattern in patterns_for_num:
+                if pattern in results and results[pattern]:
+                    all_pages.extend(results[pattern])
+
+            # Remove duplicates and sort
+            figure_results[num] = sorted(list(set(all_pages)))
+
+        return figure_results
+
+    def get_all_figure_references(self) -> Set[str]:
+        """Scan PDF and return all figure references found.
+
+        Returns:
+            Set of all figure references found in the document
+        """
+        if not self.doc:
+            raise ValueError(
+                "PDF document not opened. Use as context manager or call open_pdf() first."
+            )
+
+        figure_refs = set()
+        patterns = [
+            r"\bFig\.?\s*\d+[a-zA-Z]*",  # Fig. 1, Fig 2a, etc.
+            r"\bFigure\s*\d+[a-zA-Z]*",  # Figure 1, Figure 2a, etc.
+        ]
+
+        for page_num in range(len(self.doc)):
+            page = self.doc[page_num]
+            page_text = page.get_text()
+
+            for pattern in patterns:
+                matches = re.findall(pattern, page_text, re.IGNORECASE)
+                figure_refs.update(matches)
+
+        return figure_refs
+
+    def open_pdf(self):
+        """Manually open PDF document (alternative to context manager)."""
+        if not self.doc:
+            self.doc = fitz.open(self.pdf_path)
+
+    def close_pdf(self):
+        """Manually close PDF document (alternative to context manager)."""
+        if self.doc:
+            self.doc.close()
+            self.doc = None
 
 
 class PDFFinder:

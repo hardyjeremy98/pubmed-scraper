@@ -5,8 +5,8 @@ from Bio import Entrez
 from utils import create_pmc_url, ensure_pmid_directory
 from http_session import HTTPSession
 from metadata import MetadataFetcher
-from pdf_downloader import PDFDownloader
-from image_downloader import ImageDownloader
+from pdf_handler import PDFDownloader
+from figure_handler import ImageDownloader
 from storage import ArticleManager
 from utils import ArticleMetadata, Figure
 

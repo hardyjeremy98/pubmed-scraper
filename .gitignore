@@ -2,6 +2,9 @@ __pycache__
 *.json
 .env
 articles_data/
+bbox/
+images/
+figures/
 *.tsv
 *.ipynb
 *.csv
@@ -10,5 +13,5 @@ articles_data/
 *.pdf
 *.svg
 model_cache/
-main_old.py
-pubmed_scraper_old.py
+*.md
+*.pt
