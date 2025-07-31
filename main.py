@@ -835,7 +835,7 @@ def main():
         print("Error: Invalid JSON format in unique_pmids.json")
         return []
 
-    # pmids = ["19258323", "18350169"]
+    pmids = ["19258323", "18350169"]
     processed_articles = []
 
     for pmid in pmids:
