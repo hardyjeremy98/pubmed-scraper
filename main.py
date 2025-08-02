@@ -1,7 +1,7 @@
 from pubmed_scraper import PubMedClient
 from pdf_handler import PageExtractor
 from figure_scanner import scan_article_figures_for_keywords
-from llm_input_prep import FigureTextExtractor
+from llm_input_prep import extract_figure_text
 from llm_data_extractor import LLMDataExtractor
 from image_segmenter import PlotDetector, BoundingBoxLabeler
 from dotenv import load_dotenv
@@ -201,7 +201,7 @@ def extract_tht_data(
             llm_result = extractor.run_model(
                 text=figure_text,
                 image_path=image_to_use,
-                analysis_type="data_extractor",
+                analysis_type="data_extractor_2",
                 model="gpt-4o",
                 tht_plot_list=[plot_num],  # Pass single plot as list
             )
@@ -256,8 +256,8 @@ def extract_tht_data(
                     extracted_data = json.loads(response_content)
 
                     if isinstance(extracted_data, dict):
-                        # Merge the extracted data into our results
-                        all_extracted_data.update(extracted_data)
+                        # Store the extracted data under the plot number
+                        all_extracted_data[str(plot_num)] = extracted_data
                         successful_extractions += 1
                         print(
                             f"        ✓ Successfully extracted data for plot {plot_num}"
@@ -278,33 +278,33 @@ def extract_tht_data(
         # Set the final results
         result["extracted_data"] = all_extracted_data
 
+        # Always save the data extraction results, even if all extractions failed
+        # This helps with debugging and provides visibility into what went wrong
+        article_dir = Path(base_dir) / pmid
+        data_results_path = article_dir / f"{figure_name}_tht_data_extraction.json"
+
+        extraction_data = {
+            "pmid": pmid,
+            "figure_name": figure_name,
+            "original_image_analyzed": original_image_path,
+            "segmented_paths_used": segmented_paths,
+            "tht_plot_numbers": tht_plot_numbers,
+            "figure_text_used": figure_text,
+            "extracted_data": result["extracted_data"],
+            "successful_extractions": successful_extractions,
+            "total_plots_attempted": len(tht_plot_numbers),
+            "llm_responses": result["llm_responses"],
+            "analysis_timestamp": None,  # Could add timestamp if needed
+        }
+
+        with open(data_results_path, "w") as f:
+            json.dump(extraction_data, f, indent=2, ensure_ascii=False)
+
+        result["results_file"] = str(data_results_path)
+
         # Consider successful if we extracted data for at least one plot
         if successful_extractions > 0:
             result["success"] = True
-
-            # Save the data extraction results
-            article_dir = Path(base_dir) / pmid
-            data_results_path = article_dir / f"{figure_name}_tht_data_extraction.json"
-
-            extraction_data = {
-                "pmid": pmid,
-                "figure_name": figure_name,
-                "original_image_analyzed": original_image_path,
-                "segmented_paths_used": segmented_paths,
-                "tht_plot_numbers": tht_plot_numbers,
-                "figure_text_used": figure_text,
-                "extracted_data": result["extracted_data"],
-                "successful_extractions": successful_extractions,
-                "total_plots_attempted": len(tht_plot_numbers),
-                "llm_responses": result["llm_responses"],
-                "analysis_timestamp": None,  # Could add timestamp if needed
-            }
-
-            with open(data_results_path, "w") as f:
-                json.dump(extraction_data, f, indent=2, ensure_ascii=False)
-
-            result["results_file"] = str(data_results_path)
-
             print(
                 f"    ✓ Data extraction completed: {successful_extractions}/{len(tht_plot_numbers)} plots processed successfully"
             )
@@ -314,6 +314,9 @@ def extract_tht_data(
                 f"Failed to extract data from any of the {len(tht_plot_numbers)} ThT plots"
             )
             print(f"    ✗ Data extraction failed for all {len(tht_plot_numbers)} plots")
+            print(
+                f"    ✓ Saved failed extraction results for debugging: {data_results_path}"
+            )
 
     except Exception as e:
         result["error"] = str(e)
@@ -741,7 +744,6 @@ def process_article_figures_and_pages(
         # Extract text context for LLM input preparation
         if article.content and result["relevant_figures"]:
             try:
-                extractor = FigureTextExtractor(context_words=250)
                 figure_contexts = []
 
                 # Create a mapping of figure numbers to Figure objects
@@ -752,13 +754,19 @@ def process_article_figures_and_pages(
                     if fig_num in figure_map:
                         figure_data = figure_map[fig_num]
 
-                        # Extract context for this figure
-                        combined_text, image_path = extractor.extract_figure_context(
+                        # Extract context for this figure with flexible options
+                        # You can modify these parameters as needed:
+                        # - include_surrounding_text=True: includes surrounding text + caption
+                        # - include_surrounding_text=False: only caption
+                        # - context_words: amount of surrounding text (ignored if include_surrounding_text=False)
+                        combined_text, image_path = extract_figure_text(
                             article_text=article.content,
                             figure_number=fig_num,
                             figure_data=figure_data,
                             pmid=pmid,
                             base_dir=pubmed_client.base_dir,
+                            include_surrounding_text=True,  # Set to False for caption only
+                            context_words=250,  # Adjust number of surrounding words
                         )
 
                         figure_contexts.append(

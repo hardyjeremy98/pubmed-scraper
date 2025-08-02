@@ -113,16 +113,56 @@ class LLMDataExtractor:
                 },
             ]
 
-        elif message_type == "summary":
+        elif message_type == "data_extractor_2" and plot_num:
+            user_content = [
+                {
+                    "type": "text",
+                    "text": input_text,  # Should include caption + surrounding context
+                }
+            ]
+
+            # Add image if provided
+            if image_path:
+                user_content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_base64}",
+                            "detail": "auto",
+                        },
+                    }
+                )
+
             messages = [
                 {
                     "role": "system",
-                    "content": """You are an expert scientific writer who creates concise, accurate summaries of research papers. 
-                    Focus on the most important findings and their implications.""",
+                    "content": """You are provided with a scientific figure and its associated caption and text. Plot {plot_num} has been identified as a Thioflavin T (ThT) fluorescence vs. time plot.
+
+        Your task is to extract the experimental conditions specifically associated with plot {plot_num}. Extract the mapping between each legend key or line style (e.g., •, ○, "black triangle", "dashed red line") and its corresponding experimental condition.
+
+        Return a JSON object where each key is a legend key, and the value is a dictionary of experimental variables.
+
+        Use this format:
+        {
+        "•": {
+            "Protein": "AChE586-599",
+            "Protein concentration": "100 µM",
+            "Mutation": "WT",
+            "Temperature": null,
+            "pH": null,
+            "Additives": ["ThT"],
+            "Additive concentrations": ["165 µM"]
+        },
+        ...
+        }
+
+        If there is more than one additive in the list, make sure additive concentrations match.
+
+        """,
                 },
                 {
                     "role": "user",
-                    "content": f"Create a concise scientific summary of this text, highlighting the main findings and conclusions:\n\n{input_text}",
+                    "content": user_content,
                 },
             ]
 
@@ -174,7 +214,7 @@ class LLMDataExtractor:
         # Default parameters
         default_params = {
             "temperature": 0.1,
-            "max_tokens": 500,
+            "max_tokens": 1500,  # Increased from 500 to handle complex legend mappings
             "top_p": 1.0,
             "frequency_penalty": 0.0,
             "presence_penalty": 0.0,
