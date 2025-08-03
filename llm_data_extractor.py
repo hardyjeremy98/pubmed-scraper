@@ -59,7 +59,7 @@ class LLMDataExtractor:
                 },
             ]
 
-        elif message_type == "data_extractor" and plot_num:
+        elif message_type == "variables_extractor" and plot_num:
             user_content = [
                 {
                     "type": "text",
@@ -84,28 +84,35 @@ class LLMDataExtractor:
                     "role": "system",
                     "content": f"""You are provided with a scientific figure and its associated caption and text. Plot {plot_num} has been identified as a Thioflavin T (ThT) fluorescence vs. time plot.
 
-        Your task is to extract the experimental conditions specifically associated with plot {plot_num}.
+            Your task is to extract only the experimental conditions for {plot_num} that vary between legend keys or line styles (e.g., •, ○, "black triangle", "dashed red line"). Ignore conditions that are constant across all samples (e.g., shared buffer, same temperature, same ThT concentration, etc.).
 
-        Return a JSON object with exactly this structure:
+            The list of variable experimental conditions to extract includes:
+            - Mutation
+            - Protein/mutation concentration
+            - Temperature
+            - pH
+            - Additives (e.g., DTT, H2O2)
+            - Additive concentrations (e.g., 3 mM, 64 mM)
 
-        {{
-        "{plot_num}": {{
-            "Protein": ["string"],
-            "Mutation": ["string or null"],
-            "Protein concentration": ["number with unit"],
-            "Temperature": ["number with unit"],
-            "pH": [number],
-            "Additives": ["string"],
-            "Additive concentrations": ["string with unit"]
-        }}
-        }}
+            If an additive is mentioned with a concentration, split it into `"Additives"` and `"Additive concentrations"` accordingly. Ensure values are not merged into one field.
 
-        Each list must have the same number of items as the number of variables/lines in the plot. For example, if the plot has 3 lines, each list must have 3 items ([a,b,c]), even if the condition is the same across all lines.
+            If a condition is not applicable or not mentioned, set its value to an empty list.
 
-        If a condition has multiple values, they should be separated by commas. For example if there are two additives, it should be ["additive1, additive2"], and the additive concentrations should match.
-        
-        If a condition is not mentioned, use an empty list.
-        """,
+            Return a JSON object where each key is a legend key or line style, and the value is a dictionary containing only the variable experimental conditions for that sample. Omit fields that are not variable.
+
+            Use this JSON format:
+            {{
+            "•": {{
+                "pH": [],
+            }},
+            "red_line": {{
+                "Mutation": ["WT"],
+                "Additives": ["NaCl"],
+                "Additive concentrations": ["10 mM"]
+            }},
+            ...
+            }}
+            """,
                 },
                 {
                     "role": "user",
@@ -113,7 +120,7 @@ class LLMDataExtractor:
                 },
             ]
 
-        elif message_type == "data_extractor_2" and plot_num:
+        elif message_type == "constants_extractor" and plot_num:
             user_content = [
                 {
                     "type": "text",
@@ -121,44 +128,32 @@ class LLMDataExtractor:
                 }
             ]
 
-            # Add image if provided
-            if image_path:
-                user_content.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{image_base64}",
-                            "detail": "auto",
-                        },
-                    }
-                )
-
             messages = [
                 {
                     "role": "system",
-                    "content": """You are provided with a scientific figure and its associated caption and text. Plot {plot_num} has been identified as a Thioflavin T (ThT) fluorescence vs. time plot.
+                    "content": f"""You are provided with a scientific figure's caption and surrounding text. Plot {plot_num} has been identified as a Thioflavin T (ThT) fluorescence vs. time plot.
 
-        Your task is to extract the experimental conditions specifically associated with plot {plot_num}. Extract the mapping between each legend key or line style (e.g., •, ○, "black triangle", "dashed red line") and its corresponding experimental condition.
+            Your task is to extract only the constant experimental conditions that apply across all samples in this plot.
+            
+            If a condition varies between samples (e.g., mutations, concentrations, additives, etc.), then its value must be set to null.
 
-        Return a JSON object where each key is a legend key, and the value is a dictionary of experimental variables.
+            If a condition is not applicable or not mentioned, set its value to null.
 
-        Use this format:
-        {
-        "•": {
-            "Protein": "AChE586-599",
-            "Protein concentration": "100 µM",
-            "Mutation": "WT",
-            "Temperature": null,
-            "pH": null,
-            "Additives": ["ThT"],
-            "Additive concentrations": ["165 µM"]
-        },
-        ...
-        }
+            Return a single JSON object in the following format:
+            {{
+            "Protein": ["string"],
+            "Mutation": [null],
+            "Protein/mutation concentration": [null],
+            "Temperature": ["number with unit"],
+            "pH": ["number"],
+            "Additives": ["string"],
+            "Additive concentrations": ["string with unit"]
+            }}
 
-        If there is more than one additive in the list, make sure additive concentrations match.
+            Ignore any experimental conditions that are not listed above. Ignore conditions that do not exactly fit the specified format (e.g. buffer is not an additive). If a condition is not applicable or not mentioned, set its value to null.
 
-        """,
+            If there is more than one additive in the list, make sure additive concentrations match.
+            """,
                 },
                 {
                     "role": "user",
@@ -166,35 +161,41 @@ class LLMDataExtractor:
                 },
             ]
 
-        elif message_type == "classification":
+        elif message_type == "match_maker" and plot_num:
+            user_content = [
+                {
+                    "type": "text",
+                    "text": input_text,  # Should include caption + surrounding context
+                }
+            ]
+
             messages = [
                 {
                     "role": "system",
-                    "content": """You are a scientific literature classifier. Classify research content based on experimental approaches, 
-                    research domains, and methodological categories. Provide clear classifications with confidence levels.""",
+                    "content": f"""You are given:
+
+            1. A dictionary where each key is a legend symbol (e.g., "○", "•", "×") and the value is a set of experimental conditions.
+
+            2. A list of table column headers that correspond to mutation types (e.g., "H4/A", "S8/A", "WT").
+
+            Your task is to match each column header to the correct legend symbol by comparing the "Mutation" field in the dictionary to the header name.
+
+            Return your output as a list of tuples in the format:
+
+            [("column_header", "legend_symbol"), ...]. For example: [("H4/A", "•"), ("S8/A", "○")]. If matching is not possible, return False.
+            """,
                 },
                 {
                     "role": "user",
-                    "content": f"""Classify this scientific text according to:
-                    1. Research domain (e.g., biochemistry, biophysics, cell biology)
-                    2. Experimental approach (e.g., in vitro, in vivo, computational)
-                    3. Protein aggregation relevance (high/medium/low)
-                    4. Key methodologies used
-                    
-                    Text to classify:
-                    {input_text}""",
+                    "content": user_content,
                 },
             ]
 
         else:
-            # Default generic message
-            messages = [
-                {
-                    "role": "system",
-                    "content": "You are a helpful scientific research assistant. Analyze the provided text and provide relevant insights.",
-                },
-                {"role": "user", "content": input_text},
-            ]
+            # Error catch
+            raise ValueError(
+                "Invalid message type or missing plot number for constants extraction."
+            )
 
         return messages
 

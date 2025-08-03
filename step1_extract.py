@@ -4,6 +4,7 @@ from figure_scanner import scan_article_figures_for_keywords
 from llm_input_prep import extract_figure_text
 from llm_data_extractor import LLMDataExtractor
 from image_segmenter import PlotDetector, BoundingBoxLabeler
+from utils import merge_constants_and_variables, create_clean_merged_file
 from dotenv import load_dotenv
 import os
 import json
@@ -131,26 +132,28 @@ def extract_tht_data(
     original_image_path: str,
     figure_name: str,
     tht_plot_numbers: List[int],
-    figure_text: str,
+    article_content: str,
+    figure_data,  # Figure object from utils
     openai_api_key: str,
     base_dir: str,
     segmented_paths: List[str] = None,
 ) -> Dict:
     """
-    Extract experimental data from identified ThT plots using LLM.
+    Extract experimental data from identified ThT plots using dual LLM extractors.
 
     Args:
         pmid: PubMed ID of the article
         original_image_path: Path to the original figure image (fallback)
         figure_name: Base name of the figure (e.g., "figure_1")
         tht_plot_numbers: List of ThT plot numbers identified
-        figure_text: Caption and surrounding text for the figure
+        article_content: Full article text content
+        figure_data: Figure object with metadata (from utils.py)
         openai_api_key: OpenAI API key for LLM processing
         base_dir: Base directory where article data is stored
         segmented_paths: List of paths to segmented plot images
 
     Returns:
-        Dictionary containing data extraction results
+        Dictionary containing data extraction results from both extractors
     """
     result = {
         "pmid": pmid,
@@ -168,11 +171,51 @@ def extract_tht_data(
         result["error"] = "No ThT plots to extract data from"
         return result
 
+    def _parse_json_response(response_content: str) -> dict:
+        """Helper function to parse JSON from LLM response, handling markdown code blocks."""
+        response_content = response_content.strip()
+
+        # Handle markdown code blocks
+        if response_content.startswith("```json"):
+            lines = response_content.split("\n")
+            json_lines = []
+            in_json_block = False
+
+            for line in lines:
+                if line.strip() == "```json":
+                    in_json_block = True
+                    continue
+                elif line.strip() == "```" and in_json_block:
+                    break
+                elif in_json_block:
+                    json_lines.append(line)
+
+            response_content = "\n".join(json_lines)
+        elif response_content.startswith("```"):
+            # Handle other code block formats
+            lines = response_content.split("\n")
+            json_lines = []
+            in_code_block = False
+
+            for line in lines:
+                if line.strip().startswith("```"):
+                    if not in_code_block:
+                        in_code_block = True
+                        continue
+                    else:
+                        break
+                elif in_code_block:
+                    json_lines.append(line)
+
+            response_content = "\n".join(json_lines)
+
+        return json.loads(response_content)
+
     try:
         # Initialize LLM extractor
         extractor = LLMDataExtractor(openai_api_key)
 
-        # Process each ThT plot individually
+        # Process each ThT plot individually with dual extractors
         print(
             f"    Extracting data from ThT plots {tht_plot_numbers} in {figure_name}..."
         )
@@ -197,89 +240,119 @@ def extract_tht_data(
                     f"        Using original image (segmented not available): {original_image_path}"
                 )
 
-            # Run data extraction for this specific plot
-            llm_result = extractor.run_model(
-                text=figure_text,
-                image_path=image_to_use,
-                analysis_type="data_extractor_2",
-                model="gpt-4o",
-                tht_plot_list=[plot_num],  # Pass single plot as list
-            )
+            # Use the existing extract_figure_text function properly
+            try:
+                # Extract figure number from figure_name (e.g., "figure_3" -> 3)
+                fig_num = int(figure_name.split("_")[1])
 
-            result["llm_responses"].append(
-                {"plot_number": plot_num, "llm_result": llm_result}
-            )
-
-            if llm_result["success"]:
-                try:
-                    # Parse the JSON response
-                    response_content = llm_result["content"].strip()
-
-                    # Handle markdown code blocks
-                    if response_content.startswith("```json"):
-                        # Extract JSON from markdown code blocks
-                        lines = response_content.split("\n")
-                        json_lines = []
-                        in_json_block = False
-
-                        for line in lines:
-                            if line.strip() == "```json":
-                                in_json_block = True
-                                continue
-                            elif line.strip() == "```" and in_json_block:
-                                break
-                            elif in_json_block:
-                                json_lines.append(line)
-
-                        response_content = "\n".join(json_lines)
-                    elif response_content.startswith("```"):
-                        # Handle other code block formats
-                        lines = response_content.split("\n")
-                        json_lines = []
-                        in_code_block = False
-
-                        for line in lines:
-                            if line.strip().startswith("```"):
-                                if not in_code_block:
-                                    in_code_block = True
-                                    continue
-                                else:
-                                    break
-                            elif in_code_block:
-                                json_lines.append(line)
-
-                        response_content = "\n".join(json_lines)
-
-                    # Try to parse as JSON
-                    import json
-
-                    extracted_data = json.loads(response_content)
-
-                    if isinstance(extracted_data, dict):
-                        # Store the extracted data under the plot number
-                        all_extracted_data[str(plot_num)] = extracted_data
-                        successful_extractions += 1
-                        print(
-                            f"        ✓ Successfully extracted data for plot {plot_num}"
-                        )
-                    else:
-                        print(f"        ✗ Invalid JSON format for plot {plot_num}")
-
-                except json.JSONDecodeError as e:
-                    print(f"        ✗ JSON parsing error for plot {plot_num}: {e}")
-                except Exception as e:
-                    print(f"        ✗ Processing error for plot {plot_num}: {e}")
-
-            else:
-                print(
-                    f"        ✗ LLM API call failed for plot {plot_num}: {llm_result['error']}"
+                # Use extract_figure_text to get caption only (for variables_extractor)
+                caption_text, _ = extract_figure_text(
+                    article_text=article_content,
+                    figure_number=fig_num,
+                    figure_data=figure_data,
+                    pmid=pmid,
+                    base_dir=base_dir,
+                    include_surrounding_text=False,  # Caption only
                 )
+
+                # Print caption
+                print(
+                    f"        Caption text: {caption_text[:100]}..."
+                )  # Show first 100 chars
+
+                # Use extract_figure_text to get caption + context (for constants_extractor)
+                context_text, _ = extract_figure_text(
+                    article_text=article_content,
+                    figure_number=fig_num,
+                    figure_data=figure_data,
+                    pmid=pmid,
+                    base_dir=base_dir,
+                    include_surrounding_text=True,  # Caption + surrounding text
+                    context_words=250,
+                )
+
+                print(
+                    f"        Context text: {context_text[:100]}..."
+                )  # Show first 100 chars
+
+                print(f"        Caption text length: {len(caption_text)} chars")
+                print(f"        Context text length: {len(context_text)} chars")
+
+            except Exception as e:
+                print(f"        ⚠ Text extraction failed: {e}")
+                # Simple fallback - use figure caption directly
+                caption_text = figure_data.caption if figure_data.caption else ""
+                context_text = caption_text
+
+            # Run variables_extractor (image + caption only)
+            print(f"        Running variables extractor...")
+            variables_result = extractor.run_model(
+                text=caption_text,
+                analysis_type="variables_extractor",
+                model="gpt-4o",
+                tht_plot_list=[plot_num],
+            )
+
+            # Run constants_extractor (no image, caption + context)
+            print(f"        Running constants extractor...")
+            constants_result = extractor.run_model(
+                text=context_text,
+                image_path=None,  # No image for constants extractor
+                analysis_type="constants_extractor",
+                model="gpt-4o",
+                tht_plot_list=[plot_num],
+            )
+
+            # Store both results
+            result["llm_responses"].append(
+                {
+                    "plot_number": plot_num,
+                    "variables_result": variables_result,
+                    "constants_result": constants_result,
+                }
+            )
+
+            # Process variables extractor results
+            variables_data = None
+            if variables_result["success"]:
+                try:
+                    variables_data = _parse_json_response(variables_result["content"])
+                    print(
+                        f"        ✓ Variables extraction successful for plot {plot_num}"
+                    )
+                except (json.JSONDecodeError, Exception) as e:
+                    print(
+                        f"        ✗ Variables extraction parsing error for plot {plot_num}: {e}"
+                    )
+
+            # Process constants extractor results
+            constants_data = None
+            if constants_result["success"]:
+                try:
+                    constants_data = _parse_json_response(constants_result["content"])
+                    print(
+                        f"        ✓ Constants extraction successful for plot {plot_num}"
+                    )
+                except (json.JSONDecodeError, Exception) as e:
+                    print(
+                        f"        ✗ Constants extraction parsing error for plot {plot_num}: {e}"
+                    )
+
+            # Store the extracted data under the plot number
+            if variables_data or constants_data:
+                all_extracted_data[str(plot_num)] = {
+                    "variables": variables_data,
+                    "constants": constants_data,
+                }
+                successful_extractions += 1
+                print(f"        ✓ Successfully processed plot {plot_num}")
+            else:
+                print(f"        ✗ Both extractors failed for plot {plot_num}")
 
         # Set the final results
         result["extracted_data"] = all_extracted_data
 
         # Always save the data extraction results, even if all extractions failed
-        # This helps with debugging and provides visibility into what went wrong
         article_dir = Path(base_dir) / pmid
         data_results_path = article_dir / f"{figure_name}_tht_data_extraction.json"
 
@@ -289,12 +362,13 @@ def extract_tht_data(
             "original_image_analyzed": original_image_path,
             "segmented_paths_used": segmented_paths,
             "tht_plot_numbers": tht_plot_numbers,
-            "figure_text_used": figure_text,
+            "caption_text_used": caption_text if "caption_text" in locals() else "N/A",
+            "context_text_used": context_text if "context_text" in locals() else "N/A",
             "extracted_data": result["extracted_data"],
             "successful_extractions": successful_extractions,
             "total_plots_attempted": len(tht_plot_numbers),
             "llm_responses": result["llm_responses"],
-            "analysis_timestamp": None,  # Could add timestamp if needed
+            "analysis_timestamp": None,
         }
 
         with open(data_results_path, "w") as f:
@@ -302,18 +376,54 @@ def extract_tht_data(
 
         result["results_file"] = str(data_results_path)
 
+        # Create clean merged conditions file if extraction was successful
+        if successful_extractions > 0 and result["extracted_data"]:
+            try:
+                # Generate merged file path
+                merged_file_path = article_dir / f"{figure_name}_tht_data_merged.json"
+
+                # Create clean merged file with only experimental conditions
+                merged_result = merge_constants_and_variables(result["extracted_data"])
+
+                with open(merged_file_path, "w") as f:
+                    json.dump(merged_result, f, indent=2, ensure_ascii=False)
+
+                result["merged_file"] = str(merged_file_path)
+
+                # Count total conditions
+                total_conditions = sum(
+                    len(plot_data.get("total_conditions", {}))
+                    for plot_data in merged_result.values()
+                )
+
+                print(f"    ✓ Created clean merged conditions file: {merged_file_path}")
+                print(f"      Total experimental conditions: {total_conditions}")
+
+            except Exception as e:
+                print(f"    ⚠ Failed to create merged conditions file: {e}")
+                # Don't fail the whole extraction if merger fails
+                result["merger_error"] = str(e)
+
         # Consider successful if we extracted data for at least one plot
         if successful_extractions > 0:
             result["success"] = True
             print(
-                f"    ✓ Data extraction completed: {successful_extractions}/{len(tht_plot_numbers)} plots processed successfully"
+                f"    ✓ Dual extraction completed: {successful_extractions}/{len(tht_plot_numbers)} plots processed successfully"
             )
             print(f"    ✓ Saved extraction results: {data_results_path}")
+
+            # Report merged file if created
+            if "merged_file" in result:
+                print(f"    ✓ Saved clean merged conditions: {result['merged_file']}")
+            elif "merger_error" in result:
+                print(
+                    f"    ⚠ Merged conditions file creation failed: {result['merger_error']}"
+                )
         else:
             result["error"] = (
                 f"Failed to extract data from any of the {len(tht_plot_numbers)} ThT plots"
             )
-            print(f"    ✗ Data extraction failed for all {len(tht_plot_numbers)} plots")
+            print(f"    ✗ Dual extraction failed for all {len(tht_plot_numbers)} plots")
             print(
                 f"    ✓ Saved failed extraction results for debugging: {data_results_path}"
             )
@@ -438,6 +548,8 @@ def process_figure_bounding_boxes(
     base_dir: str,
     openai_api_key: str = None,
     figure_contexts: List[Dict] = None,
+    article_content: str = None,
+    figure_map: Dict = None,
 ) -> Dict:
     """
     Process downloaded figure images to detect plots and create bounding box data.
@@ -447,6 +559,8 @@ def process_figure_bounding_boxes(
         base_dir: Base directory where article data is stored
         openai_api_key: OpenAI API key for LLM processing (optional)
         figure_contexts: List of figure context data with text and metadata (optional)
+        article_content: Full article text content (optional, for extract_figure_text)
+        figure_map: Mapping of figure numbers to Figure objects (optional, for extract_figure_text)
 
     Returns:
         Dictionary containing bounding box processing results
@@ -563,41 +677,33 @@ def process_figure_bounding_boxes(
                         and tht_result["success"]
                         and tht_result["tht_plot_numbers"]
                     ):
-                        # Find the corresponding figure context for this figure
-                        figure_text = ""
-                        if figure_contexts:
-                            # Extract figure number from figure_name (e.g., "figure_3" -> 3)
+                        # Get the figure data for this figure
+                        figure_data = None
+                        if figure_map:
                             try:
                                 fig_num = int(figure_name.split("_")[1])
-                                figure_context = next(
-                                    (
-                                        ctx
-                                        for ctx in figure_contexts
-                                        if ctx["figure_number"] == fig_num
-                                    ),
-                                    None,
-                                )
-                                if figure_context:
-                                    figure_text = figure_context["text"]
+                                figure_data = figure_map.get(fig_num)
                             except (IndexError, ValueError):
                                 print(
                                     f"    ⚠ Could not extract figure number from {figure_name}"
                                 )
 
-                        if figure_text:
+                        # Use the refactored extract_tht_data function if we have the required data
+                        if article_content and figure_data:
                             data_extraction_result = extract_tht_data(
                                 pmid,
                                 str(image_path),  # Original image for fallback
                                 figure_name,
                                 tht_result["tht_plot_numbers"],
-                                figure_text,
+                                article_content,  # Full article text
+                                figure_data,  # Figure object
                                 openai_api_key,
                                 base_dir,
                                 segmented_paths,  # Pass segmented plot paths
                             )
                         else:
                             print(
-                                f"    ⚠ No figure context found for {figure_name}, skipping data extraction"
+                                f"    ⚠ Missing article content or figure data for {figure_name}, skipping data extraction"
                             )
 
                 # Store results
@@ -791,7 +897,12 @@ def process_article_figures_and_pages(
             print(f"Processing bounding boxes for {pmid}...")
             figure_contexts_to_pass = result.get("figure_contexts", None)
             bbox_result = process_figure_bounding_boxes(
-                pmid, pubmed_client.base_dir, openai_api_key, figure_contexts_to_pass
+                pmid,
+                pubmed_client.base_dir,
+                openai_api_key,
+                figure_contexts_to_pass,
+                article.content,  # Pass article content
+                figure_map,  # Pass figure mapping
             )
             result["bbox_processing"] = bbox_result
 
@@ -912,6 +1023,15 @@ def main():
                                             data_result["extracted_data"].keys()
                                         )
                                         data_extraction_info = f" | Data extracted for plots: {extracted_plots}"
+
+                                        # Add merged file info if available
+                                        if "merged_file" in data_result:
+                                            data_extraction_info += (
+                                                " | Merged conditions file created"
+                                            )
+                                        elif "merger_error" in data_result:
+                                            data_extraction_info += " | Merger failed"
+
                                     elif data_result["success"]:
                                         data_extraction_info = (
                                             " | Data extraction: no data found"

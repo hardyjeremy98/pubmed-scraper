@@ -237,3 +237,122 @@ def process_csv_file(
             "analysis": None,
             "error": str(e),
         }
+
+
+def merge_constants_and_variables(extracted_data: Dict) -> Dict:
+    """
+    Merge constants and variables JSONs for each plot number into total_conditions.
+
+    For each plot number, the function creates individual condition dictionaries
+    by combining the constants (shared across all conditions) with each variable
+    entry (specific to each symbol/condition).
+
+    Args:
+        extracted_data: Dictionary with plot numbers as keys, each containing
+                       "variables" and "constants" dictionaries
+
+    Returns:
+        Dictionary with same structure but "total_conditions" key instead of
+        "variables" and "constants"
+
+    Example:
+        Input:
+        {
+            "1": {
+                "variables": {
+                    "•": {"Mutation": ["WT"], "Additives": []},
+                    "○": {"Mutation": ["R17C"], "Additives": ["H2O2"]}
+                },
+                "constants": {
+                    "Protein": ["Ure2p"],
+                    "Temperature": ["8 °C"]
+                }
+            }
+        }
+
+        Output:
+        {
+            "1": {
+                "total_conditions": {
+                    "•": {"Protein": ["Ure2p"], "Temperature": ["8 °C"],
+                          "Mutation": ["WT"], "Additives": []},
+                    "○": {"Protein": ["Ure2p"], "Temperature": ["8 °C"],
+                          "Mutation": ["R17C"], "Additives": ["H2O2"]}
+                }
+            }
+        }
+    """
+    merged_data = {}
+
+    for plot_number, plot_data in extracted_data.items():
+        if not isinstance(plot_data, dict):
+            continue
+
+        variables = plot_data.get("variables", {})
+        constants = plot_data.get("constants", {})
+
+        # Create total_conditions dictionary
+        total_conditions = {}
+
+        # For each variable symbol (•, ○, ▾, ▿, etc.)
+        for symbol, variable_data in variables.items():
+            # Start with constants as base
+            condition = constants.copy()
+
+            # Override/add with variable-specific data
+            for key, value in variable_data.items():
+                condition[key] = value
+
+            total_conditions[symbol] = condition
+
+        # Store in merged data structure
+        merged_data[plot_number] = {"total_conditions": total_conditions}
+
+    return merged_data
+
+
+def create_clean_merged_file(input_file: str, output_file: str) -> bool:
+    """
+    Create a clean merged JSON file containing only experimental condition data.
+
+    This utility function takes a ThT data extraction file and creates a clean
+    merged version that contains only the experimental conditions, without any
+    metadata like PMIDs, file paths, LLM responses, etc.
+
+    Args:
+        input_file: Path to the original ThT data extraction JSON file
+        output_file: Path where the clean merged data should be saved
+
+    Returns:
+        bool: True if successful, False if failed
+
+    Example usage:
+        success = create_clean_merged_file(
+            "articles_data/19258323/figure_1_tht_data_extraction.json",
+            "articles_data/19258323/figure_1_tht_data_merged.json"
+        )
+    """
+    try:
+        import json
+
+        # Load the original extraction data
+        with open(input_file, "r") as f:
+            full_data = json.load(f)
+
+        # Extract only the extracted_data portion
+        extracted_data = full_data.get("extracted_data", {})
+
+        if not extracted_data:
+            return False
+
+        # Merge constants and variables
+        merged_result = merge_constants_and_variables(extracted_data)
+
+        # Save only the merged result (no metadata)
+        with open(output_file, "w") as f:
+            json.dump(merged_result, f, indent=2, ensure_ascii=False)
+
+        return True
+
+    except Exception:
+        return False
