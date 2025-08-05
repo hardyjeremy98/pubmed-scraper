@@ -41,9 +41,12 @@ class LLMDataExtractor:
                     "role": "system",
                     "content": """You are given a scientific figure where each plot is labeled with a unique number and enclosed within a bounding box.
 
-        Your task is to identify which of these plots are Thioflavin T (ThT) fluorescence vs. time plots. Only consider plots that have bounding boxes, and only include those that are line or scatter plots (not bar charts, images, or tables).
+        Your task is to identify which of these plots are Thioflavin T (ThT) fluorescence vs. time plots. Only consider plots that have sequentially labelled bounding boxes.
 
-        Return ONLY a Python-style list of the relevant plot numbers. For example: [1, 3, 4]. If there are none, return an empty list: []. Do not include any additional explanation or text.""",
+        The ThT time plots are line or scatter plots (not bar charts, images, or tables). They have a fluorescence y-axis and a time x-axis. The y-axis label may include "ThT", "Thioflavin T", or "fluorescence". The x-axis label may include "time", "minutes", or "seconds".
+        Return ONLY a Python-style list of the relevant plot numbers. For example: [1, 3, 4]. If there are none, return an empty list: [].
+        
+        Do not include any additional explanation or text.""",
                 },
                 {
                     "role": "user",
@@ -161,11 +164,11 @@ class LLMDataExtractor:
                 },
             ]
 
-        elif message_type == "match_maker" and plot_num:
+        elif message_type == "match_maker":
             user_content = [
                 {
                     "type": "text",
-                    "text": input_text,  # Should include caption + surrounding context
+                    "text": input_text,  # Should include dictionary and csv headers
                 }
             ]
 
@@ -174,15 +177,17 @@ class LLMDataExtractor:
                     "role": "system",
                     "content": f"""You are given:
 
-            1. A dictionary where each key is a legend symbol (e.g., "○", "•", "×") and the value is a set of experimental conditions.
+            1. A dictionary where each key is a either a legend symbol or a variable descriptor (e.g., "○", "red line", "pH 3") and the value is a set of experimental conditions.
 
-            2. A list of table column headers that correspond to mutation types (e.g., "H4/A", "S8/A", "WT").
+            2. A list of table column headers. Time is always the first column, followed by legend symbols or variable descriptors.
 
-            Your task is to match each column header to the correct legend symbol by comparing the "Mutation" field in the dictionary to the header name.
+            Your task is to match each column header (excluding Time) to the correct dictionary item.
 
-            Return your output as a list of tuples in the format:
+            Output a list of tuples in the format:
 
-            [("column_header", "legend_symbol"), ...]. For example: [("H4/A", "•"), ("S8/A", "○")]. If matching is not possible, return False.
+            [("legend_symbol", "column_header"), ...]. For example: [("•", "Black Circles"), ("pH 3", "Black Triangles")]. If matching is not possible, return False.
+
+            Do not include any additional text or explanation.
             """,
                 },
                 {
@@ -193,13 +198,17 @@ class LLMDataExtractor:
 
         else:
             # Error catch
-            raise ValueError(
-                "Invalid message type or missing plot number for constants extraction."
-            )
+            raise ValueError("Invalid message type.")
 
         return messages
 
-    def use_message(self, messages: list, model: str = "gpt-4o-mini", **kwargs) -> dict:
+    def use_message(
+        self,
+        messages: list,
+        model: str = "gpt-4o-mini",
+        temperature: float = 0.1,
+        **kwargs,
+    ) -> dict:
         """
         Send messages to OpenAI API and get response.
 
@@ -214,7 +223,7 @@ class LLMDataExtractor:
 
         # Default parameters
         default_params = {
-            "temperature": 0.1,
+            "temperature": temperature,
             "max_tokens": 1500,  # Increased from 500 to handle complex legend mappings
             "top_p": 1.0,
             "frequency_penalty": 0.0,
@@ -260,7 +269,8 @@ class LLMDataExtractor:
         image_path: str = None,
         analysis_type: str = "data_extractor",
         model: str = "gpt-4o-mini",
-        tht_plot_list: list = None,
+        temperature: float = 0.1,
+        plot_num: int = None,
         **kwargs,
     ) -> dict:
         """
@@ -277,9 +287,6 @@ class LLMDataExtractor:
         Returns:
             Dictionary containing the response and metadata
         """
-        # For data_extractor, we need to pass the first plot number from the list
-        plot_num = (
-            tht_plot_list[0] if tht_plot_list and len(tht_plot_list) > 0 else None
-        )
+
         messages = self.create_message(text, image_path, analysis_type, plot_num)
-        return self.use_message(messages, model, **kwargs)
+        return self.use_message(messages, model, temperature, **kwargs)

@@ -6,6 +6,8 @@ This module provides flexible text extraction functions for figure context prepa
 
 import re
 import os
+import json
+import pandas as pd
 from typing import Dict, Tuple, Optional
 from utils import Figure
 
@@ -150,3 +152,55 @@ def _extract_surrounding_text(
     following_text = " ".join(following_words)
 
     return preceding_text, following_text
+
+
+def prepare_csv_and_experimental_data_for_llm(
+    csv_path: str, experimental_data: Dict, figure_caption: str = ""
+) -> str:
+    """
+    Prepare CSV data and experimental conditions as a formatted string for LLM input.
+
+    Args:
+        csv_path: Path to the CSV file containing the plot data
+        experimental_data: Dictionary containing experimental conditions from the figure JSON
+        figure_caption: Figure caption text to provide additional context
+
+    Returns:
+        Formatted string combining CSV data and experimental conditions for LLM processing
+    """
+    try:
+        # Read the CSV file
+        df = pd.read_csv(csv_path)
+
+        # Format the message for LLM
+        message_parts = []
+
+        # Figure caption section (if available)
+        if figure_caption:
+            message_parts.append("Figure Caption:")
+            message_parts.append(figure_caption)
+            message_parts.append("")
+
+        # Experimental conditions section
+        message_parts.append("Experimental Conditions:")
+        if "total_conditions" in experimental_data:
+            conditions = experimental_data["total_conditions"]
+            message_parts.append(str(conditions))
+        else:
+            message_parts.append("No experimental conditions data available.")
+        message_parts.append("")
+
+        # CSV data section
+        message_parts.append("CSV Data:")
+        # Get column headers as a list
+        column_headers = df.columns.tolist()
+        message_parts.append(str(column_headers))
+
+        return "\n".join(message_parts)
+
+    except FileNotFoundError:
+        return f"Error: CSV file not found at {csv_path}"
+    except pd.errors.EmptyDataError:
+        return f"Error: CSV file is empty at {csv_path}"
+    except Exception as e:
+        return f"Error processing data: {str(e)}"

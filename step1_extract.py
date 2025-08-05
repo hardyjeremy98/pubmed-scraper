@@ -290,7 +290,7 @@ def extract_tht_data(
                 text=caption_text,
                 analysis_type="variables_extractor",
                 model="gpt-4o",
-                tht_plot_list=[plot_num],
+                plot_num=plot_num,
             )
 
             # Run constants_extractor (no image, caption + context)
@@ -300,7 +300,7 @@ def extract_tht_data(
                 image_path=None,  # No image for constants extractor
                 analysis_type="constants_extractor",
                 model="gpt-4o",
-                tht_plot_list=[plot_num],
+                plot_num=plot_num,
             )
 
             # Store both results
@@ -379,8 +379,15 @@ def extract_tht_data(
         # Create clean merged conditions file if extraction was successful
         if successful_extractions > 0 and result["extracted_data"]:
             try:
-                # Generate merged file path
-                merged_file_path = article_dir / f"{figure_name}_tht_data_merged.json"
+                # Create experimental_conditions directory
+                experimental_conditions_dir = article_dir / "experimental_conditions"
+                experimental_conditions_dir.mkdir(exist_ok=True)
+
+                # Generate merged file path with just figure name (e.g., "figure1.json")
+                figure_filename = (
+                    figure_name.replace("_", "") + ".json"
+                )  # "figure_1" -> "figure1.json"
+                merged_file_path = experimental_conditions_dir / figure_filename
 
                 # Create clean merged file with only experimental conditions
                 merged_result = merge_constants_and_variables(result["extracted_data"])
