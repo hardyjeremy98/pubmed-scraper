@@ -16,7 +16,7 @@ class MetadataFetcher:
 
     def get_article_metadata(self, pmid: str) -> ArticleMetadata:
         """
-        Retrieve article metadata (PMID, PMCID, title, DOI, journal).
+        Retrieve article metadata (PMID, PMCID, title, DOI, journal, publisher).
         Uses caching to avoid repeated API calls.
         """
         # Check cache first
@@ -35,6 +35,12 @@ class MetadataFetcher:
             if fallback_pmcid:
                 metadata.pmcid = fallback_pmcid
 
+        # Get publisher from DOI if available
+        if metadata.doi and not metadata.publisher:
+            publisher = self.get_publisher_from_doi(metadata.doi)
+            if publisher:
+                metadata.publisher = publisher
+
         # Cache the result
         self._cache[pmid] = metadata
         return metadata
@@ -47,12 +53,16 @@ class MetadataFetcher:
             r = self.http_session.get(epmc_url)
             if r.status_code == 200 and r.json().get("hitCount", 0) > 0:
                 doc = r.json()["resultList"]["result"][0]
+                doi = doc.get("doi", "")
+                publisher = self.get_publisher_from_doi(doi) if doi else ""
+
                 return ArticleMetadata(
                     pmid=pmid,
                     pmcid=doc.get("pmcid"),
                     title=doc.get("title", ""),
-                    doi=doc.get("doi", ""),
+                    doi=doi,
                     journal=doc.get("journalTitle", ""),
+                    publisher=publisher,
                 )
         except Exception as e:
             print(f"Error fetching from EPMC for PMID {pmid}: {e}")
@@ -91,7 +101,7 @@ class MetadataFetcher:
         """Fetch metadata from PubMed API as fallback."""
         article_data = self._fetch_pubmed_record(pmid)
         if not article_data:
-            return ArticleMetadata(pmid=pmid)
+            return ArticleMetadata(pmid=pmid, publisher="")
 
         title = article_data.get("ArticleTitle", "")
         journal = article_data.get("Journal", {}).get("Title", "")
@@ -103,7 +113,12 @@ class MetadataFetcher:
                 doi = str(eloc)
                 break
 
-        return ArticleMetadata(pmid=pmid, title=title, doi=doi, journal=journal)
+        # Get publisher from DOI if available
+        publisher = self.get_publisher_from_doi(doi) if doi else ""
+
+        return ArticleMetadata(
+            pmid=pmid, title=title, doi=doi, journal=journal, publisher=publisher
+        )
 
     def clear_cache(self) -> None:
         """Clear both metadata and HTML caches."""
@@ -208,5 +223,114 @@ class MetadataFetcher:
             if html_content:
                 article.html_content = html_content
                 return html_content
+
+        return None
+
+    def get_publisher_from_doi(self, doi: str) -> Optional[str]:
+        """
+        Determine the publisher/hosting platform from a DOI.
+
+        Args:
+            doi: The DOI string (with or without 'https://doi.org/' prefix)
+
+        Returns:
+            Publisher name or hosting platform, or None if not determinable
+        """
+        if not doi:
+            return None
+
+        # Clean the DOI - remove URL prefix if present
+        clean_doi = doi.replace("https://doi.org/", "").replace(
+            "http://dx.doi.org/", ""
+        )
+
+        # Common DOI prefix to publisher mappings
+        publisher_mappings = {
+            "10.1038": "Nature Publishing Group",
+            "10.1016": "Elsevier",
+            "10.1021": "American Chemical Society",
+            "10.1371": "PLOS",
+            "10.1073": "Proceedings of the National Academy of Sciences",
+            "10.1126": "Science/AAAS",
+            "10.1186": "BMC/BioMed Central",
+            "10.1083": "Rockefeller University Press",
+            "10.1091": "American Society for Cell Biology",
+            "10.1042": "Portland Press/Biochemical Society",
+            "10.1074": "American Society for Biochemistry and Molecular Biology",
+            "10.1128": "American Society for Microbiology",
+            "10.1242": "Company of Biologists",
+            "10.1002": "Wiley",
+            "10.1080": "Taylor & Francis",
+            "10.1007": "Springer",
+            "10.1093": "Oxford University Press",
+            "10.1017": "Cambridge University Press",
+            "10.3389": "Frontiers",
+            "10.1172": "American Society for Clinical Investigation",
+            "10.1096": "Federation of American Societies for Experimental Biology",
+            "10.4161": "Taylor & Francis (Landes Bioscience)",
+            "10.15252": "EMBO Press",
+            "10.1101": "Cold Spring Harbor Laboratory Press",
+            "10.1155": "Hindawi",
+            "10.3390": "MDPI",
+            "10.1177": "SAGE Publications",
+            "10.1089": "Mary Ann Liebert",
+            "10.1098": "Royal Society Publishing",
+            "10.1113": "The Physiological Society",
+            "10.1152": "American Physiological Society",
+        }
+
+        # Check for exact matches first
+        for prefix, publisher in publisher_mappings.items():
+            if clean_doi.startswith(prefix):
+                return publisher
+
+        # For more detailed analysis, try to resolve the DOI
+        try:
+            doi_url = f"https://doi.org/{clean_doi}"
+            response = self.http_session.head(doi_url, allow_redirects=True)
+
+            if response.status_code == 200:
+                final_url = response.url.lower()
+
+                # Check the final redirected URL for publisher domains
+                domain_mappings = {
+                    "nature.com": "Nature Publishing Group",
+                    "sciencedirect.com": "Elsevier",
+                    "pubs.acs.org": "American Chemical Society",
+                    "journals.plos.org": "PLOS",
+                    "pnas.org": "Proceedings of the National Academy of Sciences",
+                    "science.org": "Science/AAAS",
+                    "biomedcentral.com": "BMC/BioMed Central",
+                    "rupress.org": "Rockefeller University Press",
+                    "molbiolcell.org": "American Society for Cell Biology",
+                    "portlandpress.com": "Portland Press",
+                    "jbc.org": "American Society for Biochemistry and Molecular Biology",
+                    "asm.org": "American Society for Microbiology",
+                    "biologists.org": "Company of Biologists",
+                    "onlinelibrary.wiley.com": "Wiley",
+                    "tandfonline.com": "Taylor & Francis",
+                    "link.springer.com": "Springer",
+                    "academic.oup.com": "Oxford University Press",
+                    "cambridge.org": "Cambridge University Press",
+                    "frontiersin.org": "Frontiers",
+                    "jci.org": "American Society for Clinical Investigation",
+                    "fasebj.org": "Federation of American Societies for Experimental Biology",
+                    "embopress.org": "EMBO Press",
+                    "cshlp.org": "Cold Spring Harbor Laboratory Press",
+                    "hindawi.com": "Hindawi",
+                    "mdpi.com": "MDPI",
+                    "sagepub.com": "SAGE Publications",
+                    "liebertpub.com": "Mary Ann Liebert",
+                    "royalsocietypublishing.org": "Royal Society Publishing",
+                    "physiology.org": "The Physiological Society",
+                    "physiology.org": "American Physiological Society",
+                }
+
+                for domain, publisher in domain_mappings.items():
+                    if domain in final_url:
+                        return publisher
+
+        except Exception as e:
+            print(f"Error resolving DOI {doi}: {e}")
 
         return None

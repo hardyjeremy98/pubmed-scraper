@@ -26,6 +26,7 @@ class ArticleMetadata:
     title: str = ""
     doi: str = ""
     journal: str = ""
+    publisher: str = ""  # Publisher/hosting platform
     source: str = ""
     content: str = ""
     html_content: Optional[str] = None  # Store raw HTML content
@@ -38,6 +39,7 @@ class ArticleMetadata:
             "title": self.title,
             "doi": self.doi,
             "journal": self.journal,
+            "publisher": self.publisher,
             "source": self.source,
             "content": self.content,
             "html_content": self.html_content,
