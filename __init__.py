@@ -9,7 +9,7 @@ and figure extraction.
 from .pubmed_scraper import PubMedClient
 from .utils import ArticleMetadata, Figure, create_pmc_url, ensure_pmid_directory
 from .http_session import HTTPSession
-from .metadata import MetadataFetcher
+from .article_fetcher import MetadataFetcher
 from .pdf_handler import PDFDownloader, PDFFinder, PageExtractor
 from .figure_handler import ImageDownloader
 from .storage import ArticleManager

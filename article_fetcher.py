@@ -77,35 +77,46 @@ class MetadataFetcher:
             print(f"NCBI eLink error for PMID {pmid}: {e}")
         return None
 
-    def _fetch_metadata_from_pubmed(self, pmid: str) -> ArticleMetadata:
-        """Fetch metadata from PubMed API as fallback."""
+    def _fetch_pubmed_record(self, pmid: str) -> Optional[dict]:
+        """Fetch the raw PubMed record for a given PMID."""
         try:
             handle = Entrez.efetch(db="pubmed", id=pmid, rettype="xml", retmode="xml")
             record = Entrez.read(handle)
-            article = record["PubmedArticle"][0]["MedlineCitation"]["Article"]
-
-            title = article.get("ArticleTitle", "")
-            journal = article.get("Journal", {}).get("Title", "")
-            doi = ""
-
-            # Extract DOI if available
-            for eloc in article.get("ELocationID", []):
-                if (
-                    hasattr(eloc, "attributes")
-                    and eloc.attributes.get("EIdType") == "doi"
-                ):
-                    doi = str(eloc)
-                    break
-
-            return ArticleMetadata(pmid=pmid, title=title, doi=doi, journal=journal)
-
+            return record["PubmedArticle"][0]["MedlineCitation"]["Article"]
         except Exception as e:
-            print(f"Error fetching from PubMed for PMID {pmid}: {e}")
+            print(f"Error fetching PubMed record for PMID {pmid}: {e}")
+            return None
+
+    def _fetch_metadata_from_pubmed(self, pmid: str) -> ArticleMetadata:
+        """Fetch metadata from PubMed API as fallback."""
+        article_data = self._fetch_pubmed_record(pmid)
+        if not article_data:
             return ArticleMetadata(pmid=pmid)
 
+        title = article_data.get("ArticleTitle", "")
+        journal = article_data.get("Journal", {}).get("Title", "")
+        doi = ""
+
+        # Extract DOI if available
+        for eloc in article_data.get("ELocationID", []):
+            if hasattr(eloc, "attributes") and eloc.attributes.get("EIdType") == "doi":
+                doi = str(eloc)
+                break
+
+        return ArticleMetadata(pmid=pmid, title=title, doi=doi, journal=journal)
+
     def clear_cache(self) -> None:
-        """Clear the metadata cache."""
+        """Clear both metadata and HTML caches."""
         self._cache.clear()
+        self._html_cache.clear()
+
+    def clear_metadata_cache(self) -> None:
+        """Clear only the metadata cache."""
+        self._cache.clear()
+
+    def clear_html_cache(self) -> None:
+        """Clear only the HTML cache."""
+        self._html_cache.clear()
 
     def get_cached_article(self, pmid: str) -> Optional[ArticleMetadata]:
         """Get article from cache if available."""
@@ -115,18 +126,15 @@ class MetadataFetcher:
         """
         Get complete article data including full text, abstract, and HTML.
         """
-        # If we have a PMCID, fetch HTML first and derive content from it
+        # Try to get HTML content first if we have a PMCID
         if article.pmcid and not article.html_content:
-            pmc_url = create_pmc_url(article.pmcid)
-            html_content = self._fetch_html_from_pmc(pmc_url)
-            if html_content:
-                article.html_content = html_content
-                # Extract text content from HTML if we don't have content yet
-                if not article.content:
-                    content = self._extract_text_from_html(html_content)
-                    if content:
-                        article.content = content
-                        article.source = "fulltext"
+            html_content = self.get_html_content(article)
+            # Extract text content from HTML if we don't have content yet
+            if html_content and not article.content:
+                content = self._extract_text_from_html(html_content)
+                if content:
+                    article.content = content
+                    article.source = "fulltext"
 
         # If still no content, try to get abstract
         if not article.content:
@@ -176,20 +184,16 @@ class MetadataFetcher:
 
     def _fetch_abstract_from_pubmed(self, pmid: str) -> Optional[str]:
         """Fetch abstract from PubMed."""
-        try:
-            handle = Entrez.efetch(db="pubmed", id=pmid, rettype="xml", retmode="xml")
-            record = Entrez.read(handle)
-            article = record["PubmedArticle"][0]["MedlineCitation"]["Article"]
+        article_data = self._fetch_pubmed_record(pmid)
+        if not article_data:
+            return None
 
-            abstract_sections = article.get("Abstract", {}).get("AbstractText", [])
-            if abstract_sections:
-                if isinstance(abstract_sections, list):
-                    return " ".join(str(section) for section in abstract_sections)
-                else:
-                    return str(abstract_sections)
-
-        except Exception as e:
-            print(f"Error fetching abstract for PMID {pmid}: {e}")
+        abstract_sections = article_data.get("Abstract", {}).get("AbstractText", [])
+        if abstract_sections:
+            if isinstance(abstract_sections, list):
+                return " ".join(str(section) for section in abstract_sections)
+            else:
+                return str(abstract_sections)
 
         return None
 
@@ -203,6 +207,6 @@ class MetadataFetcher:
             html_content = self._fetch_html_from_pmc(pmc_url)
             if html_content:
                 article.html_content = html_content
-            return html_content
+                return html_content
 
         return None
