@@ -1,3 +1,11 @@
+import os
+import json
+import argparse
+from typing import Dict, List, Optional
+from pathlib import Path
+import cv2
+import numpy as np
+
 from pubmed_scraper import PubMedClient
 from pdf_handler import PageExtractor
 from figure_scanner import scan_article_figures_for_keywords
@@ -6,12 +14,6 @@ from llm_data_extractor import LLMDataExtractor
 from image_segmenter import PlotDetector, BoundingBoxLabeler
 from utils import merge_constants_and_variables, create_clean_merged_file
 from dotenv import load_dotenv
-import os
-import json
-from typing import Dict, List, Optional
-from pathlib import Path
-import cv2
-import numpy as np
 
 
 def identify_tht_plots(
@@ -929,8 +931,21 @@ def process_article_figures_and_pages(
     return result
 
 
-def main():
-    """Main function to process literature articles."""
+def main(
+    strategy: str = "json",
+    pmid_list: List[str] = None,
+    search_term: str = None,
+    max_results: int = 10,
+):
+    """
+    Main function to process literature articles.
+
+    Args:
+        strategy: Strategy to get PMIDs ('json', 'list', or 'search')
+        pmid_list: List of PMIDs when using 'list' strategy
+        search_term: PubMed search term when using 'search' strategy
+        max_results: Maximum number of results when using 'search' strategy
+    """
     # Load environment variables
     load_dotenv()
 
@@ -949,19 +964,54 @@ def main():
     # Initialize client
     pubmed_client = PubMedClient(email=email, base_dir="articles_data")
 
-    # Load PMIDs from JSON file
-    try:
-        with open("unique_pmids.json", "r") as f:
-            pmids = json.load(f)
-        print(f"Loaded {len(pmids)} PMIDs from unique_pmids.json")
-    except FileNotFoundError:
-        print("Error: unique_pmids.json file not found")
-        return []
-    except json.JSONDecodeError:
-        print("Error: Invalid JSON format in unique_pmids.json")
+    # Get PMIDs based on the chosen strategy
+    pmids = []
+
+    if strategy == "json":
+        # Load PMIDs from JSON file
+        try:
+            with open("unique_pmids.json", "r") as f:
+                pmids = json.load(f)
+            print(f"Loaded {len(pmids)} PMIDs from unique_pmids.json")
+        except FileNotFoundError:
+            print("Error: unique_pmids.json file not found")
+            return []
+        except json.JSONDecodeError:
+            print("Error: Invalid JSON format in unique_pmids.json")
+            return []
+
+    elif strategy == "list":
+        # Use provided list of PMIDs
+        if pmid_list:
+            pmids = pmid_list
+            print(f"Using provided list of {len(pmids)} PMIDs: {pmids}")
+        else:
+            # Fallback to default test PMIDs if no list provided
+            pmids = ["19258323", "18350169"]
+            print(f"No PMID list provided, using default test PMIDs: {pmids}")
+
+    elif strategy == "search":
+        # Search PubMed for PMIDs
+        if not search_term:
+            print("Error: search_term is required when using 'search' strategy")
+            return []
+
+        try:
+            print(f"Searching PubMed for: '{search_term}' (max results: {max_results})")
+            pmids = pubmed_client.search_pubmed(search_term, retmax=max_results)
+            print(f"Found {len(pmids)} PMIDs from search")
+
+            if not pmids:
+                print("No results found for the search term")
+                return []
+        except Exception as e:
+            print(f"Error searching PubMed: {e}")
+            return []
+
+    else:
+        print(f"Error: Unknown strategy '{strategy}'. Use 'json', 'list', or 'search'")
         return []
 
-    pmids = ["19258323", "18350169"]
     processed_articles = []
 
     for pmid in pmids:
@@ -1073,4 +1123,14 @@ def main():
 
 
 if __name__ == "__main__":
-    results = main()
+    # Example usage - modify these calls as needed:
+
+    # Strategy 1: Use JSON file (default behavior)
+    # results = main(strategy="json")
+
+    # Strategy 2: Use specific PMID list
+    # results = main(strategy="list", pmid_list=["19258323", "18350169"])
+
+    # Strategy 3: Use PubMed search
+    search_term = "(protein aggregation) AND (ThT OR thioflavin)"
+    results = main(strategy="search", search_term=search_term, max_results=5)
