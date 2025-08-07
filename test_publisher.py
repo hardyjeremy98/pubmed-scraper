@@ -5,7 +5,7 @@ Test script to verify publisher information is being added to metadata.json file
 
 import json
 import os
-from article_fetcher import MetadataFetcher
+from article_fetcher import DataFetcher
 from http_session import HTTPSession
 from storage import ArticleManager
 
@@ -15,9 +15,7 @@ def test_publisher_extraction():
 
     # Initialize components
     http_session = HTTPSession()
-    metadata_fetcher = MetadataFetcher(
-        email="test@example.com", http_session=http_session
-    )
+    metadata_fetcher = DataFetcher(email="test@example.com", http_session=http_session)
     article_manager = ArticleManager()
 
     # Test with a known PMID that should have a DOI

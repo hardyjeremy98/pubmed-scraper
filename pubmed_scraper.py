@@ -4,7 +4,7 @@ from Bio import Entrez
 
 from utils import create_pmc_url, ensure_pmid_directory
 from http_session import HTTPSession
-from article_fetcher import MetadataFetcher
+from article_fetcher import DataFetcher
 from pdf_handler import PDFDownloader
 from figure_handler import ImageDownloader
 from storage import ArticleManager
@@ -17,7 +17,7 @@ class PubMedClient:
     def __init__(self, email: str, base_dir: str = "articles_data"):
         self.base_dir = base_dir
         self.http_session = HTTPSession()
-        self.metadata_fetcher = MetadataFetcher(email, self.http_session)
+        self.metadata_fetcher = DataFetcher(email, self.http_session)
         self.pdf_downloader = PDFDownloader(self.http_session, base_dir)
         self.image_downloader = ImageDownloader(self.http_session, base_dir)
         self.article_manager = ArticleManager()

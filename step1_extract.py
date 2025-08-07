@@ -12,7 +12,12 @@ from figure_scanner import scan_article_figures_for_keywords
 from llm_input_prep import extract_figure_text
 from llm_data_extractor import LLMDataExtractor
 from image_segmenter import PlotDetector, BoundingBoxLabeler
-from utils import merge_constants_and_variables, create_clean_merged_file
+from utils import (
+    merge_constants_and_variables,
+    create_clean_merged_file,
+    track_publisher,
+    get_publisher_tracker,
+)
 from dotenv import load_dotenv
 
 
@@ -802,6 +807,10 @@ def process_article_figures_and_pages(
     try:
         # Get article metadata and content
         article = pubmed_client.get_full_article(pmid)
+
+        # Track publisher information
+        track_publisher(pmid, article.publisher)
+
         result["article"] = {
             "title": article.title,
             "pmcid": article.pmcid,
@@ -964,6 +973,18 @@ def main(
     # Initialize client
     pubmed_client = PubMedClient(email=email, base_dir="articles_data")
 
+    # Try to load existing publisher statistics if available
+    publisher_tracker = get_publisher_tracker()
+    stats_file = "publisher_statistics.json"
+    if os.path.exists(stats_file):
+        print(f"Loading existing publisher statistics from {stats_file}")
+        publisher_tracker.load_from_file(stats_file)
+        print(
+            f"Loaded statistics for {publisher_tracker.total_articles} previously processed articles"
+        )
+    else:
+        print("Starting fresh publisher statistics tracking")
+
     # Get PMIDs based on the chosen strategy
     pmids = []
 
@@ -1014,8 +1035,8 @@ def main(
 
     processed_articles = []
 
-    for pmid in pmids:
-        print(f"Processing PMID: {pmid}")
+    for i, pmid in enumerate(pmids, 1):
+        print(f"Processing PMID: {pmid} ({i}/{len(pmids)})")
 
         result = process_article_figures_and_pages(pmid, pubmed_client, openai_api_key)
         processed_articles.append(result)
@@ -1117,7 +1138,38 @@ def main(
         else:
             print(f"✗ Failed to process {pmid}: {result['error']}")
 
+        # Show incremental publisher statistics after each article
+        publisher_tracker = get_publisher_tracker()
+        current_stats = publisher_tracker.get_stats()
+        print(
+            f"  Publisher statistics ({current_stats['total_articles']} articles processed):"
+        )
+        print(
+            f"    Coverage: {current_stats['coverage_percentage']:.1f}% | Unique publishers: {current_stats['unique_publishers']}"
+        )
+
+        # Show top 3 publishers if we have any
+        if current_stats["publisher_counts"]:
+            sorted_publishers = sorted(
+                current_stats["publisher_counts"].items(),
+                key=lambda x: x[1],
+                reverse=True,
+            )
+            top_publishers = sorted_publishers[:3]
+            publisher_summary = ", ".join(
+                [f"{pub}: {count}" for pub, count in top_publishers]
+            )
+            print(f"    Top publishers: {publisher_summary}")
+
+        # Save publisher statistics after each PMID is processed
+        stats_file = "publisher_statistics.json"
+        publisher_tracker.save_to_file(stats_file)
+
         print("-" * 60)
+
+    # Display final publisher statistics summary
+    publisher_tracker = get_publisher_tracker()
+    publisher_tracker.print_stats(detailed=True)
 
     return processed_articles
 
@@ -1133,4 +1185,4 @@ if __name__ == "__main__":
 
     # Strategy 3: Use PubMed search
     search_term = "(protein aggregation) AND (ThT OR thioflavin)"
-    results = main(strategy="search", search_term=search_term, max_results=5)
+    results = main(strategy="search", search_term=search_term, max_results=100)

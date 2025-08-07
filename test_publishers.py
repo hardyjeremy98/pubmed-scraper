@@ -3,7 +3,7 @@
 Quick test of different DOIs to verify publisher detection
 """
 
-from article_fetcher import MetadataFetcher
+from article_fetcher import DataFetcher
 from http_session import HTTPSession
 
 
@@ -11,9 +11,7 @@ def test_different_publishers():
     """Test publisher detection for different DOI prefixes."""
 
     http_session = HTTPSession()
-    metadata_fetcher = MetadataFetcher(
-        email="test@example.com", http_session=http_session
-    )
+    metadata_fetcher = DataFetcher(email="test@example.com", http_session=http_session)
 
     test_dois = [
         "10.1038/s41586-021-03819-2",  # Nature

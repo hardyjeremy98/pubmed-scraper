@@ -3,6 +3,149 @@ import pandas as pd
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Any, Tuple
 from io import StringIO
+import json
+from pathlib import Path
+from collections import defaultdict
+
+
+class PublisherTracker:
+    """Class to track publisher statistics across multiple PMIDs."""
+
+    def __init__(self):
+        self.publisher_counts = defaultdict(int)
+        self.pmid_to_publisher = {}
+        self.total_articles = 0
+        self.articles_with_publisher = 0
+        self.articles_without_publisher = 0
+
+    def add_article(self, pmid: str, publisher: str = ""):
+        """
+        Add an article to the publisher tracking.
+
+        Args:
+            pmid: PubMed ID of the article
+            publisher: Publisher name (empty string if unknown)
+        """
+        self.total_articles += 1
+        self.pmid_to_publisher[pmid] = publisher
+
+        if publisher:
+            self.publisher_counts[publisher] += 1
+            self.articles_with_publisher += 1
+        else:
+            self.publisher_counts["Unknown/No DOI"] += 1
+            self.articles_without_publisher += 1
+
+    def get_stats(self) -> Dict[str, Any]:
+        """
+        Get current publisher statistics.
+
+        Returns:
+            Dictionary containing publisher statistics
+        """
+        return {
+            "total_articles": self.total_articles,
+            "articles_with_publisher": self.articles_with_publisher,
+            "articles_without_publisher": self.articles_without_publisher,
+            "publisher_counts": dict(self.publisher_counts),
+            "unique_publishers": len(
+                [p for p in self.publisher_counts.keys() if p != "Unknown/No DOI"]
+            ),
+            "coverage_percentage": (
+                (self.articles_with_publisher / self.total_articles * 100)
+                if self.total_articles > 0
+                else 0
+            ),
+        }
+
+    def print_stats(self, detailed: bool = True):
+        """
+        Print current publisher statistics.
+
+        Args:
+            detailed: Whether to show detailed publisher breakdown
+        """
+        stats = self.get_stats()
+
+        print("\n" + "=" * 60)
+        print("PUBLISHER STATISTICS")
+        print("=" * 60)
+        print(f"Total articles processed: {stats['total_articles']}")
+        print(f"Articles with publisher info: {stats['articles_with_publisher']}")
+        print(f"Articles without publisher info: {stats['articles_without_publisher']}")
+        print(f"Publisher coverage: {stats['coverage_percentage']:.1f}%")
+        print(f"Unique publishers found: {stats['unique_publishers']}")
+
+        if detailed and stats["publisher_counts"]:
+            print("\nPublisher breakdown:")
+            print("-" * 40)
+            # Sort by count (descending)
+            sorted_publishers = sorted(
+                stats["publisher_counts"].items(), key=lambda x: x[1], reverse=True
+            )
+            for publisher, count in sorted_publishers:
+                percentage = (count / stats["total_articles"]) * 100
+                print(f"  {publisher:<35} {count:>3} ({percentage:>5.1f}%)")
+
+        print("=" * 60)
+
+    def save_to_file(self, filepath: str):
+        """
+        Save publisher statistics to a JSON file.
+
+        Args:
+            filepath: Path to save the statistics file
+        """
+        stats = self.get_stats()
+        stats["pmid_to_publisher"] = self.pmid_to_publisher
+
+        with open(filepath, "w") as f:
+            json.dump(stats, f, indent=2, ensure_ascii=False)
+
+        print(f"Publisher statistics saved to: {filepath}")
+
+    def load_from_file(self, filepath: str):
+        """
+        Load publisher statistics from a JSON file.
+
+        Args:
+            filepath: Path to load the statistics file from
+        """
+        try:
+            with open(filepath, "r") as f:
+                data = json.load(f)
+
+            self.total_articles = data.get("total_articles", 0)
+            self.articles_with_publisher = data.get("articles_with_publisher", 0)
+            self.articles_without_publisher = data.get("articles_without_publisher", 0)
+            self.publisher_counts = defaultdict(int, data.get("publisher_counts", {}))
+            self.pmid_to_publisher = data.get("pmid_to_publisher", {})
+
+            print(f"Publisher statistics loaded from: {filepath}")
+            return True
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"Could not load publisher statistics from {filepath}: {e}")
+            return False
+
+
+# Global publisher tracker instance
+_publisher_tracker = PublisherTracker()
+
+
+def get_publisher_tracker() -> PublisherTracker:
+    """Get the global publisher tracker instance."""
+    return _publisher_tracker
+
+
+def track_publisher(pmid: str, publisher: str = ""):
+    """
+    Convenience function to track a publisher for an article.
+
+    Args:
+        pmid: PubMed ID of the article
+        publisher: Publisher name (empty string if unknown)
+    """
+    _publisher_tracker.add_article(pmid, publisher)
 
 
 def create_pmc_url(pmcid: str) -> str:

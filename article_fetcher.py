@@ -5,7 +5,7 @@ from utils import ArticleMetadata, create_pmc_url
 from http_session import HTTPSession
 
 
-class MetadataFetcher:
+class DataFetcher:
     """Handles fetching article metadata from various sources."""
 
     def __init__(self, email: str, http_session: HTTPSession):
