@@ -1,12 +1,14 @@
 from openai import OpenAI
 import base64
 import os
+from config import Config
 
 
 class LLMDataExtractor:
-    def __init__(self, openai_api_key: str):
-        """Initialize with OpenAI API key."""
-        self.api_key = openai_api_key
+    def __init__(self, config: Config):
+        """Initialize with config object."""
+        self.config = config
+        self.api_key = config.openai_api_key
         self.client = OpenAI(api_key=self.api_key)
 
     def _encode_image_to_base64(self, image_path):

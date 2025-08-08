@@ -9,17 +9,19 @@ from pdf_handler import PDFDownloader
 from figure_handler import ImageDownloader
 from storage import ArticleManager
 from utils import ArticleMetadata, Figure
+from config import Config
 
 
 class PubMedClient:
     """Main client class that orchestrates all components."""
 
-    def __init__(self, email: str, base_dir: str = "articles_data"):
-        self.base_dir = base_dir
+    def __init__(self, config: Config):
+        self.config = config
+        self.base_dir = config.base_dir
         self.http_session = HTTPSession()
-        self.data_fetcher = DataFetcher(email, self.http_session)
-        self.pdf_downloader = PDFDownloader(self.http_session, base_dir)
-        self.image_downloader = ImageDownloader(self.http_session, base_dir)
+        self.data_fetcher = DataFetcher(config, self.http_session)
+        self.pdf_downloader = PDFDownloader(self.http_session, self.base_dir)
+        self.image_downloader = ImageDownloader(self.http_session, self.base_dir)
         self.article_manager = ArticleManager()
 
     def search_pubmed(self, query: str, retmax: int = 100) -> List[str]:

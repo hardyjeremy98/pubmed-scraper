@@ -1,19 +1,32 @@
 from typing import Optional, Dict
 import os
+import json
+import requests
 from Bio import Entrez
 from bs4 import BeautifulSoup
 from utils import ArticleMetadata, create_pmc_url
 from http_session import HTTPSession
+from config import Config
 
 
 class DataFetcher:
     """Handles fetching article metadata from various sources."""
 
-    def __init__(self, email: str, http_session: HTTPSession):
-        Entrez.email = email
+    def __init__(self, config: Config, http_session: HTTPSession):
+        Entrez.email = config.email
+        self.config = config
         self.http_session = http_session
         self._cache: Dict[str, ArticleMetadata] = {}
         self._html_cache: Dict[str, str] = {}
+
+        # Store Elsevier API key for direct API calls
+        self._elsevier_api_key = config.elsevier_api_key
+        if self._elsevier_api_key:
+            print("✓ Elsevier API key configured for direct API access")
+        else:
+            print(
+                "Info: No Elsevier API key configured. Full text access from Elsevier will be limited."
+            )
 
     def get_article_metadata(self, pmid: str) -> ArticleMetadata:
         """
@@ -142,6 +155,24 @@ class DataFetcher:
         """
         Get complete article data including full text, abstract, and HTML.
         """
+
+        # Try Elsevier API first if publisher is Elsevier and we have DOI
+        if (
+            article.publisher == "Elsevier"
+            and article.doi
+            and self._elsevier_api_key
+            and not article.content
+        ):
+            if not getattr(self.config, "elsevier_insttoken", None):
+                print(
+                    "Note: No Elsevier institutional token configured; off-network full text is unlikely."
+                )
+            elsevier_content = self._fetch_elsevier_fulltext(article.doi)
+            if elsevier_content:
+                article.content = elsevier_content
+                article.source = "elsevier_api"
+                return article
+
         # Try to get HTML content first if we have a PMCID
         if article.pmcid and not article.html_content:
             html_content = self.get_html_content(article)
@@ -226,6 +257,319 @@ class DataFetcher:
                 return html_content
 
         return None
+
+    def check_elsevier_entitlement(self, doi: str, api_key: str):
+        """
+        Check Elsevier entitlement for a given DOI using a lightweight META view probe.
+        This is a cheap way to check if we have access before attempting full text retrieval.
+        """
+        url = f"https://api.elsevier.com/content/article/doi/{doi}"
+        params = {
+            "httpAccept": "application/json",
+            "view": "META",  # cheap probe; doesn't try to pull full text
+        }
+        r = requests.get(
+            url, params=params, headers={"X-ELS-APIKey": api_key}, timeout=20
+        )
+        print("Status:", r.status_code)
+        if r.status_code != 200:
+            print(r.text[:500])
+            return
+
+        data = r.json()
+        ftr = data.get("full-text-retrieval-response", {})
+        core = ftr.get("coredata", {})
+        links = core.get("link", [])
+        if isinstance(links, dict):
+            links = [links]
+
+        # Look for entitlement-ish rels
+        rels = [l.get("@rel") for l in links if isinstance(l, dict)]
+        print("link rels:", rels)
+
+        # A very rough signal: presence of self/entitled/full-text-ish rels
+        entitled = any("entitled" in (rel or "") for rel in rels)
+        print("Entitled (heuristic):", entitled)
+
+        # Extra: echo what full-text link (if any) looks like
+        for l in links:
+            if isinstance(l, dict) and "full" in (l.get("@rel") or "").lower():
+                print("Full link example:", l.get("@href"))
+                break
+
+    def _fetch_elsevier_fulltext(self, doi: str) -> Optional[str]:
+        """
+        Fetch full text content from Elsevier using their Article Retrieval API.
+        Requires entitlement for paywalled items (institutional token or recognized IP).
+        """
+        if not self._elsevier_api_key:
+            return None
+
+        try:
+            clean_doi = doi.replace("https://doi.org/", "").replace(
+                "http://dx.doi.org/", ""
+            )
+            print(f"Attempting to fetch full text from Elsevier for DOI: {clean_doi}")
+
+            # Check entitlement before trying to extract text
+            print("Checking Elsevier entitlement...")
+            self.check_elsevier_entitlement(clean_doi, self._elsevier_api_key)
+
+            base = "https://api.elsevier.com/content/article"
+            inst_token = getattr(self.config, "elsevier_insttoken", None)
+
+            def _req(path: str):
+                headers = {
+                    "X-ELS-APIKey": self._elsevier_api_key,
+                    "User-Agent": "Literature Mining Tool",
+                }
+                if inst_token:
+                    headers["X-ELS-Insttoken"] = inst_token
+                # Important: pass httpAccept as a query param
+                params = {"view": "FULL", "httpAccept": "application/json"}
+                return self.http_session.get(
+                    f"{base}/{path}", headers=headers, params=params
+                )
+
+            # 1) Try DOI endpoint first
+            r = _req(f"doi/{clean_doi}")
+
+            # If DOI endpoint returns 400, try to resolve to PII and re-request
+            if r.status_code == 400:
+                doi_url = f"https://doi.org/{clean_doi}"
+                try:
+                    head = self.http_session.head(doi_url, allow_redirects=True)
+                    if head.status_code == 200 and "/pii/" in head.url.lower():
+                        pii = head.url.split("/pii/")[1].split("?")[0]
+                        print(f"Resolved DOI to PII: {pii}; retrying via PII endpoint.")
+                        r = _req(f"pii/{pii}")
+                    else:
+                        print("Could not resolve PII from DOI redirect.")
+                except Exception as e:
+                    print(f"DOI->PII resolution error: {e}")
+
+            # Handle common statuses
+            if r.status_code == 401:
+                print("Unauthorized (401). Check API key.")
+                return None
+            if r.status_code == 403:
+                print(
+                    "Forbidden (403). Likely not entitled (need inst token or on-campus IP)."
+                )
+                return None
+            if r.status_code == 404:
+                print("Not found (404) in Article API. It may not be indexed yet.")
+                return None
+            if r.status_code == 429:
+                print("Rate limit exceeded (429).")
+                return None
+            if r.status_code != 200:
+                print(f"Elsevier API request failed: {r.status_code}")
+                return None
+
+            data = r.json()
+            ftr = data.get("full-text-retrieval-response")
+            if not ftr:
+                print(
+                    "No full-text-retrieval-response present. Probably not entitled to full text."
+                )
+                return None
+
+            parts = []
+
+            # Title
+            core = ftr.get("coredata", {}) or {}
+            title = core.get("dc:title")
+            if title:
+                parts.append(f"Title: {title}")
+
+            # Abstract
+            abstract = core.get("dc:description")
+            if abstract:
+                parts.append(
+                    f"Abstract: {abstract if isinstance(abstract, str) else str(abstract)}"
+                )
+
+            # Authors (defensive)
+            authors = ftr.get("authors", {}).get("author")
+            if authors:
+                if not isinstance(authors, list):
+                    authors = [authors]
+                names = []
+                for a in authors:
+                    if isinstance(a, dict):
+                        gn = a.get("ce:given-name", "")
+                        sn = a.get("ce:surname", "")
+                        nm = " ".join([gn, sn]).strip()
+                        if nm:
+                            names.append(nm)
+                if names:
+                    parts.append("Authors: " + ", ".join(names))
+
+            # Try to extract actual full text
+            grabbed_any_fulltext = False
+
+            if isinstance(ftr.get("originalText"), str):
+                parts.append(ftr["originalText"])
+                grabbed_any_fulltext = True
+
+            body_text = self._extract_elsevier_body_text(ftr)
+            if body_text:
+                parts.append(body_text)
+                grabbed_any_fulltext = True
+
+            # Optional: captions from objects
+            if "objects" in ftr:
+                obj_text = self._extract_elsevier_objects_text(ftr["objects"])
+                if obj_text:
+                    parts.append(obj_text)
+
+            if not grabbed_any_fulltext:
+                print(
+                    "Entitled full text not present in response. Likely not entitled with current IP/token."
+                )
+                return None
+
+            full_text = "\n\n".join(p for p in parts if p)
+            print(
+                f"✓ Successfully fetched Elsevier full text ({len(full_text)} characters)"
+            )
+            return full_text
+
+        except Exception as e:
+            print(f"Error fetching from Elsevier API for DOI {doi}: {e}")
+            return None
+
+    def _extract_elsevier_body_text(self, content: dict) -> Optional[str]:
+        """
+        Extract body text from Elsevier API response.
+
+        Args:
+            content: The content from Elsevier API response
+
+        Returns:
+            Extracted body text
+        """
+        try:
+            text_parts = []
+
+            # Look for different possible content structures in Elsevier API
+            if "sections" in content:
+                sections = content["sections"]
+                if isinstance(sections, dict) and "section" in sections:
+                    sections_list = sections["section"]
+                    if not isinstance(sections_list, list):
+                        sections_list = [sections_list]
+
+                    for section in sections_list:
+                        if isinstance(section, dict):
+                            # Section title
+                            if "ce:section-title" in section:
+                                text_parts.append(f"\n{section['ce:section-title']}\n")
+
+                            # Paragraphs
+                            if "ce:para" in section:
+                                paras = section["ce:para"]
+                                if not isinstance(paras, list):
+                                    paras = [paras]
+                                for para in paras:
+                                    if isinstance(para, str):
+                                        text_parts.append(para)
+                                    elif isinstance(para, dict):
+                                        if "#text" in para:
+                                            text_parts.append(para["#text"])
+                                        elif "ce:para" in para:
+                                            text_parts.append(str(para["ce:para"]))
+
+            if "body" in content:
+                body_content = content["body"]
+                if isinstance(body_content, str):
+                    text_parts.append(body_content)
+                elif isinstance(body_content, dict):
+                    body_text = self._extract_text_from_elsevier_body(body_content)
+                    if body_text:
+                        text_parts.append(body_text)
+
+            return "\n".join(text_parts) if text_parts else None
+
+        except Exception as e:
+            print(f"Error extracting body text from Elsevier response: {e}")
+            return None
+
+    def _extract_elsevier_objects_text(self, objects: dict) -> Optional[str]:
+        """
+        Extract text from objects section of Elsevier API response.
+
+        Args:
+            objects: The objects section from API response
+
+        Returns:
+            Extracted text from objects
+        """
+        try:
+            text_parts = []
+
+            if isinstance(objects, dict):
+                for obj_type, obj_content in objects.items():
+                    if isinstance(obj_content, list):
+                        for item in obj_content:
+                            if isinstance(item, dict) and "ce:caption" in item:
+                                text_parts.append(f"Caption: {item['ce:caption']}")
+                    elif isinstance(obj_content, dict) and "ce:caption" in obj_content:
+                        text_parts.append(f"Caption: {obj_content['ce:caption']}")
+
+            return "\n".join(text_parts) if text_parts else None
+
+        except Exception as e:
+            print(f"Error extracting objects text: {e}")
+            return None
+
+    def _extract_text_from_elsevier_body(self, body_data) -> Optional[str]:
+        """
+        Extract text content from Elsevier API body structure.
+
+        Args:
+            body_data: The body data from Elsevier API response
+
+        Returns:
+            Extracted text content
+        """
+        try:
+            text_parts = []
+
+            if isinstance(body_data, dict):
+                if "section" in body_data:
+                    sections = body_data["section"]
+                    if not isinstance(sections, list):
+                        sections = [sections]
+
+                    for section in sections:
+                        if isinstance(section, dict):
+                            if "ce:section-title" in section:
+                                text_parts.append(f"\n{section['ce:section-title']}\n")
+
+                            if "ce:para" in section:
+                                paras = section["ce:para"]
+                                if not isinstance(paras, list):
+                                    paras = [paras]
+
+                                for para in paras:
+                                    if isinstance(para, str):
+                                        text_parts.append(para)
+                                    elif isinstance(para, dict) and "#text" in para:
+                                        text_parts.append(para["#text"])
+
+                if not text_parts and "#text" in body_data:
+                    text_parts.append(body_data["#text"])
+
+            elif isinstance(body_data, str):
+                text_parts.append(body_data)
+
+            return "\n".join(text_parts) if text_parts else None
+
+        except Exception as e:
+            print(f"Error extracting text from Elsevier body: {e}")
+            return None
 
     def get_publisher_from_doi(self, doi: str) -> Optional[str]:
         """
@@ -323,7 +667,6 @@ class DataFetcher:
                     "sagepub.com": "SAGE Publications",
                     "liebertpub.com": "Mary Ann Liebert",
                     "royalsocietypublishing.org": "Royal Society Publishing",
-                    "physiology.org": "The Physiological Society",
                     "physiology.org": "American Physiological Society",
                 }
 

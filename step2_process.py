@@ -14,6 +14,7 @@ from utils import (
 )
 from llm_input_prep import prepare_csv_and_experimental_data_for_llm
 from llm_data_extractor import LLMDataExtractor
+from sequence_fetcher import get_protein_sequence, ProteinNotFound
 
 
 def get_csv_files(input_dir: str = "converted_tables") -> List[str]:
@@ -115,8 +116,7 @@ def find_matching_csv_files(
 
     # Initialize LLM extractor
     try:
-        openai_api_key = config.openai_api_key
-        llm_extractor = LLMDataExtractor(openai_api_key)
+        llm_extractor = LLMDataExtractor(config)
     except ValueError as e:
         print(f"Warning: {e}. LLM processing will be skipped.")
         llm_extractor = None
@@ -283,6 +283,77 @@ def find_matching_csv_files(
                                                 )
 
                                                 if "error" not in mapped_data:
+                                                    # Add protein sequences to mapped data
+                                                    for (
+                                                        plot_key,
+                                                        plot_content,
+                                                    ) in mapped_data.items():
+                                                        if plot_key.startswith(
+                                                            "_"
+                                                        ):  # Skip metadata
+                                                            continue
+
+                                                        for (
+                                                            condition_key,
+                                                            condition_data,
+                                                        ) in plot_content.items():
+                                                            if (
+                                                                isinstance(
+                                                                    condition_data, dict
+                                                                )
+                                                                and "Protein"
+                                                                in condition_data
+                                                            ):
+                                                                protein_names = (
+                                                                    condition_data.get(
+                                                                        "Protein", []
+                                                                    )
+                                                                )
+                                                                protein_sequences = []
+
+                                                                for (
+                                                                    protein_name
+                                                                ) in protein_names:
+                                                                    try:
+                                                                        print(
+                                                                            f"    Fetching sequence for protein: {protein_name}"
+                                                                        )
+                                                                        sequence_data = get_protein_sequence(
+                                                                            protein_name
+                                                                        )
+                                                                        sequence = sequence_data.get(
+                                                                            "sequence",
+                                                                            "",
+                                                                        )
+                                                                        protein_sequences.append(
+                                                                            sequence
+                                                                        )
+                                                                        print(
+                                                                            f"    ✓ Found sequence for {protein_name} ({sequence_data.get('accession', 'N/A')})"
+                                                                        )
+                                                                    except (
+                                                                        ProteinNotFound
+                                                                    ) as e:
+                                                                        print(
+                                                                            f"    ⚠ Protein sequence not found for {protein_name}: {e}"
+                                                                        )
+                                                                        protein_sequences.append(
+                                                                            ""
+                                                                        )
+                                                                    except (
+                                                                        Exception
+                                                                    ) as e:
+                                                                        print(
+                                                                            f"    ✗ Error fetching sequence for {protein_name}: {e}"
+                                                                        )
+                                                                        protein_sequences.append(
+                                                                            ""
+                                                                        )
+
+                                                                # Add protein sequences to condition data
+                                                                condition_data[
+                                                                    "protein_sequence"
+                                                                ] = protein_sequences
                                                     # Create output filename for the mapped data JSON
                                                     json_output_filename = f"{pmid}_{figure_name}_plot{plot_number}_mapped_data.json"
                                                     json_output_path = os.path.join(

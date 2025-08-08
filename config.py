@@ -27,6 +27,9 @@ class Config:
         self._email = self._get_required_env("EMAIL")
         self._openai_api_key = self._get_required_env("OPENAI_API_KEY")
 
+        # Optional Elsevier API key for full text access
+        self._elsevier_api_key = os.getenv("ELSEVIER_API_KEY")
+
         # Optional environment variables with defaults
         self._base_dir = os.getenv("BASE_DIR", "articles_data")
         self._max_retries = int(os.getenv("MAX_RETRIES", "3"))
@@ -70,6 +73,11 @@ class Config:
     def openai_api_key(self) -> str:
         """OpenAI API key for LLM processing."""
         return self._openai_api_key
+
+    @property
+    def elsevier_api_key(self) -> Optional[str]:
+        """Elsevier API key for full text access."""
+        return self._elsevier_api_key
 
     @property
     def base_dir(self) -> str:
@@ -174,8 +182,19 @@ class Config:
                 else "***"
             )
             print(f"  OpenAI API Key: {api_key_display}")
+
+            if self.elsevier_api_key:
+                elsevier_key_display = (
+                    f"{self.elsevier_api_key[:8]}..."
+                    if len(self.elsevier_api_key) > 8
+                    else "***"
+                )
+                print(f"  Elsevier API Key: {elsevier_key_display}")
+            else:
+                print("  Elsevier API Key: Not configured")
         else:
             print(f"  OpenAI API Key: {self.openai_api_key}")
+            print(f"  Elsevier API Key: {self.elsevier_api_key or 'Not configured'}")
 
         print(f"  Base Directory: {self.base_dir}")
         print(f"  Max Retries: {self.max_retries}")
@@ -231,6 +250,11 @@ def get_email() -> str:
 def get_openai_api_key() -> str:
     """Get OpenAI API key from configuration."""
     return get_config().openai_api_key
+
+
+def get_elsevier_api_key() -> Optional[str]:
+    """Get Elsevier API key from configuration."""
+    return get_config().elsevier_api_key
 
 
 def get_base_dir() -> str:

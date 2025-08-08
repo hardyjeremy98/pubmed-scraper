@@ -18,14 +18,14 @@ from utils import (
     track_publisher,
     get_publisher_tracker,
 )
-from config import get_config
+from config import get_config, Config
 
 
 def identify_tht_plots(
     pmid: str,
     bbox_image_path: str,
     figure_name: str,
-    openai_api_key: str,
+    config: Config,
     base_dir: str,
 ) -> Dict:
     """
@@ -35,7 +35,7 @@ def identify_tht_plots(
         pmid: PubMed ID of the article
         bbox_image_path: Path to the bbox-labeled image
         figure_name: Base name of the figure (e.g., "figure_1")
-        openai_api_key: OpenAI API key for LLM processing
+        config: Configuration object with OpenAI settings
         base_dir: Base directory where article data is stored
 
     Returns:
@@ -52,11 +52,8 @@ def identify_tht_plots(
     }
 
     try:
-        # Get configuration
-        config = get_config()
-
         # Initialize LLM extractor
-        extractor = LLMDataExtractor(openai_api_key)
+        extractor = LLMDataExtractor(config)
 
         # Run ThT plot identification
         print(f"    Identifying ThT plots in {figure_name}...")
@@ -144,7 +141,7 @@ def extract_tht_data(
     tht_plot_numbers: List[int],
     article_content: str,
     figure_data,  # Figure object from utils
-    openai_api_key: str,
+    config: Config,
     base_dir: str,
     segmented_paths: List[str] = None,
 ) -> Dict:
@@ -158,7 +155,7 @@ def extract_tht_data(
         tht_plot_numbers: List of ThT plot numbers identified
         article_content: Full article text content
         figure_data: Figure object with metadata (from utils.py)
-        openai_api_key: OpenAI API key for LLM processing
+        config: Configuration object with OpenAI settings
         base_dir: Base directory where article data is stored
         segmented_paths: List of paths to segmented plot images
 
@@ -222,11 +219,8 @@ def extract_tht_data(
         return json.loads(response_content)
 
     try:
-        # Get configuration
-        config = get_config()
-
         # Initialize LLM extractor
-        extractor = LLMDataExtractor(openai_api_key)
+        extractor = LLMDataExtractor(config)
 
         # Process each ThT plot individually with dual extractors
         print(
@@ -566,7 +560,7 @@ def segment_plots_from_image(
 def process_figure_bounding_boxes(
     pmid: str,
     base_dir: str,
-    openai_api_key: str = None,
+    config: Config = None,
     figure_contexts: List[Dict] = None,
     article_content: str = None,
     figure_map: Dict = None,
@@ -577,7 +571,7 @@ def process_figure_bounding_boxes(
     Args:
         pmid: PubMed ID of the article
         base_dir: Base directory where article data is stored
-        openai_api_key: OpenAI API key for LLM processing (optional)
+        config: Configuration object with OpenAI settings (optional)
         figure_contexts: List of figure context data with text and metadata (optional)
         article_content: Full article text content (optional, for extract_figure_text)
         figure_map: Mapping of figure numbers to Figure objects (optional, for extract_figure_text)
@@ -688,12 +682,12 @@ def process_figure_bounding_boxes(
                     str(image_path), detections, segmented_dir, figure_name
                 )
 
-                # Identify ThT plots in the bbox-labeled image if API key is provided
+                # Identify ThT plots in the bbox-labeled image if config is provided
                 tht_result = None
                 data_extraction_result = None
-                if openai_api_key:
+                if config:
                     tht_result = identify_tht_plots(
-                        pmid, labeled_path, figure_name, openai_api_key, base_dir
+                        pmid, labeled_path, figure_name, config, base_dir
                     )
 
                     # Extract data from identified ThT plots if any were found
@@ -722,7 +716,7 @@ def process_figure_bounding_boxes(
                                 tht_result["tht_plot_numbers"],
                                 article_content,  # Full article text
                                 figure_data,  # Figure object
-                                openai_api_key,
+                                config,
                                 base_dir,
                                 segmented_paths,  # Pass segmented plot paths
                             )
@@ -794,7 +788,7 @@ def process_figure_bounding_boxes(
 
 
 def process_article_figures_and_pages(
-    pmid: str, pubmed_client: PubMedClient, openai_api_key: str = None
+    pmid: str, pubmed_client: PubMedClient, config: Config = None
 ) -> Dict:
     """
     Process an article to extract relevant figures and their corresponding PDF pages.
@@ -803,7 +797,7 @@ def process_article_figures_and_pages(
     Args:
         pmid: PubMed ID of the article
         pubmed_client: Initialized PubMedClient instance
-        openai_api_key: OpenAI API key for LLM processing (optional)
+        config: Configuration object with OpenAI settings (optional)
 
     Returns:
         Dictionary containing article data, relevant figures, and their page locations
@@ -827,11 +821,6 @@ def process_article_figures_and_pages(
 
         # Track publisher information from metadata
         track_publisher(pmid, article.publisher)
-
-        # Always save the basic metadata, even if content access fails
-        pubmed_client.save_article_to_json(article)
-        result["metadata_saved"] = True
-        print(f"  ✓ Saved metadata for {pmid}")
 
         result["article"] = {
             "title": article.title,
@@ -874,6 +863,11 @@ def process_article_figures_and_pages(
             print(f"  ⚠ Content access failed for {pmid}: {content_error}")
             result["content_accessible"] = False
             result["content_error"] = str(content_error)
+
+        # Always save the basic metadata, even if content access fails
+        pubmed_client.save_article_to_json(article)
+        result["metadata_saved"] = True
+        print(f"  ✓ Saved metadata for {pmid}")
 
         # Step 3: Try to get figures (works even without full content for PMC articles)
         figures = None
@@ -995,7 +989,7 @@ def process_article_figures_and_pages(
                 bbox_result = process_figure_bounding_boxes(
                     pmid,
                     pubmed_client.base_dir,
-                    openai_api_key,
+                    config,
                     figure_contexts_to_pass,
                     article.content,  # Pass article content (may be None)
                     figure_map,  # Pass figure mapping
@@ -1059,11 +1053,8 @@ def main(
             "Configuration validation failed. Please check your .env file."
         )
 
-    email = config.email
-    openai_api_key = config.openai_api_key
-
-    # Initialize client
-    pubmed_client = PubMedClient(email=email, base_dir=config.base_dir)
+    # Initialize client with config
+    pubmed_client = PubMedClient(config)
 
     # Try to load existing publisher statistics if available
     publisher_tracker = get_publisher_tracker()
@@ -1130,7 +1121,7 @@ def main(
     for i, pmid in enumerate(pmids, 1):
         print(f"Processing PMID: {pmid} ({i}/{len(pmids)})")
 
-        result = process_article_figures_and_pages(pmid, pubmed_client, openai_api_key)
+        result = process_article_figures_and_pages(pmid, pubmed_client, config)
         processed_articles.append(result)
 
         # Print all keys in the result dictionary
@@ -1311,7 +1302,9 @@ if __name__ == "__main__":
     # results = main(strategy="json")
 
     # Strategy 2: Use specific PMID list
-    results = main(strategy="list", pmid_list=["40749445", "19258323", "18350169"])
+    results = main(
+        strategy="list", pmid_list=["40749445", "40678799", "19258323", "18350169"]
+    )
 
     # Strategy 3: Use PubMed search
     # search_term = "(protein aggregation) AND (ThT OR thioflavin)"
