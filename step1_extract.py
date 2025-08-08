@@ -18,7 +18,7 @@ from utils import (
     track_publisher,
     get_publisher_tracker,
 )
-from dotenv import load_dotenv
+from config import get_config
 
 
 def identify_tht_plots(
@@ -52,6 +52,9 @@ def identify_tht_plots(
     }
 
     try:
+        # Get configuration
+        config = get_config()
+
         # Initialize LLM extractor
         extractor = LLMDataExtractor(openai_api_key)
 
@@ -61,7 +64,7 @@ def identify_tht_plots(
             text="",  # No text needed for this analysis
             image_path=bbox_image_path,
             analysis_type="ThT_plot_identifier",
-            model="gpt-4o",
+            model=config.openai_model,
         )
 
         result["llm_response"] = llm_result
@@ -219,6 +222,9 @@ def extract_tht_data(
         return json.loads(response_content)
 
     try:
+        # Get configuration
+        config = get_config()
+
         # Initialize LLM extractor
         extractor = LLMDataExtractor(openai_api_key)
 
@@ -296,7 +302,7 @@ def extract_tht_data(
             variables_result = extractor.run_model(
                 text=caption_text,
                 analysis_type="variables_extractor",
-                model="gpt-4o",
+                model=config.openai_model,
                 plot_num=plot_num,
             )
 
@@ -306,7 +312,7 @@ def extract_tht_data(
                 text=context_text,
                 image_path=None,  # No image for constants extractor
                 analysis_type="constants_extractor",
-                model="gpt-4o",
+                model=config.openai_model,
                 plot_num=plot_num,
             )
 
@@ -588,9 +594,14 @@ def process_figure_bounding_boxes(
     }
 
     try:
-        # Initialize plot detector with high confidence threshold
+        # Get configuration for plot detection
+        config = get_config()
+
+        # Initialize plot detector with configured confidence threshold
         detector = PlotDetector(
-            model_path="plot_detector1.pt", confidence_threshold=0.75, device="auto"
+            model_path="plot_detector1.pt",
+            confidence_threshold=config.plot_detection_confidence,
+            device="auto",
         )
 
         # Path to article directory
@@ -787,6 +798,7 @@ def process_article_figures_and_pages(
 ) -> Dict:
     """
     Process an article to extract relevant figures and their corresponding PDF pages.
+    Always saves metadata even if content access fails.
 
     Args:
         pmid: PubMed ID of the article
@@ -802,74 +814,142 @@ def process_article_figures_and_pages(
         "relevant_figures": {},
         "success": False,
         "error": None,
+        "metadata_saved": False,
+        "content_accessible": False,
     }
 
-    try:
-        # Get article metadata and content
-        article = pubmed_client.get_full_article(pmid)
+    article = None
 
-        # Track publisher information
+    try:
+        # Step 1: Always try to get basic metadata first
+        print(f"  Getting metadata for PMID {pmid}...")
+        article = pubmed_client.data_fetcher.get_article_metadata(pmid)
+
+        # Track publisher information from metadata
         track_publisher(pmid, article.publisher)
+
+        # Always save the basic metadata, even if content access fails
+        pubmed_client.save_article_to_json(article)
+        result["metadata_saved"] = True
+        print(f"  ✓ Saved metadata for {pmid}")
 
         result["article"] = {
             "title": article.title,
             "pmcid": article.pmcid,
-            "content": article.content,
+            "doi": article.doi,
+            "journal": article.journal,
+            "publisher": article.publisher,
+            "content": None,  # Will be updated if accessible
         }
 
-        # Save article metadata
-        pubmed_client.save_article_to_json(article)
+        # Step 2: Try to get full content (this may fail for paywall articles)
+        try:
+            print(f"  Attempting to get full content for PMID {pmid}...")
+            enhanced_article = pubmed_client.data_fetcher.get_full_article_content(
+                article
+            )
 
-        # Save HTML content if available
-        if article.html_content:
-            pubmed_client.save_article_html(article.html_content, pmid)
+            if enhanced_article.content:
+                result["content_accessible"] = True
+                result["article"]["content"] = enhanced_article.content
+                result["article"]["source"] = enhanced_article.source
+                print(
+                    f"  ✓ Content accessible ({enhanced_article.source}): {len(enhanced_article.content)} characters"
+                )
 
-        # Extract figures from the article
-        figures = pubmed_client.get_article_figures(pmid)
+                # Update the article object with enhanced content
+                article = enhanced_article
 
+                # Save HTML content if available
+                if enhanced_article.html_content:
+                    pubmed_client.save_article_html(enhanced_article.html_content, pmid)
+                    print(f"  ✓ Saved HTML content for {pmid}")
+            else:
+                print(
+                    f"  ⚠ No content accessible for {pmid} (paywall/restricted access)"
+                )
+                result["content_accessible"] = False
+
+        except Exception as content_error:
+            print(f"  ⚠ Content access failed for {pmid}: {content_error}")
+            result["content_accessible"] = False
+            result["content_error"] = str(content_error)
+
+        # Step 3: Try to get figures (works even without full content for PMC articles)
+        figures = None
+        try:
+            print(f"  Attempting to get figures for PMID {pmid}...")
+            figures = pubmed_client.get_article_figures(pmid)
+
+            if figures:
+                print(f"  ✓ Found {len(figures)} figures for {pmid}")
+                # Save figures metadata
+                pubmed_client.save_figures_to_json(figures, pmid)
+            else:
+                print(f"  ⚠ No figures found for {pmid}")
+
+        except Exception as figures_error:
+            print(f"  ⚠ Figure extraction failed for {pmid}: {figures_error}")
+            result["figures_error"] = str(figures_error)
+
+        # If no figures found, still consider this a partial success since we saved metadata
         if not figures:
             result["error"] = "No figures found for this article"
+            result["success"] = True  # Still success because we saved metadata
             return result
 
-        # Save figures metadata
-        pubmed_client.save_figures_to_json(figures, pmid)
+        # Step 4: Process figures for relevance (if we have figures)
+        try:
+            # Scan figures for relevant keywords
+            scan_result = scan_article_figures_for_keywords(
+                figures, pmid=pmid, verbose=False
+            )
 
-        # Scan figures for relevant keywords
-        scan_result = scan_article_figures_for_keywords(
-            figures, pmid=pmid, verbose=False
-        )
+            if not scan_result.has_relevant_figures:
+                result["error"] = "No relevant figures found based on keyword scan"
+                result["success"] = True  # Still success because we saved metadata
+                return result
 
-        if not scan_result.has_relevant_figures:
-            result["error"] = "No relevant figures found based on keyword scan"
+            # Download relevant figures
+            for i, figure in enumerate(figures):
+                figure_number = i + 1
+                if figure_number in scan_result.relevant_figure_numbers:
+                    # Store relevant figure info
+                    result["relevant_figures"][figure_number] = {
+                        "url": figure.url,
+                        "alt_text": figure.alt,
+                        "caption": figure.caption,
+                        "keywords_found": scan_result.keyword_matches[figure_number],
+                    }
+
+                    # Download the figure image
+                    if figure.url:
+                        try:
+                            file_ext = (
+                                figure.url.split(".")[-1]
+                                if "." in figure.url.split("/")[-1]
+                                else "jpg"
+                            )
+                            filename = f"figure_{figure_number}.{file_ext}"
+                            pubmed_client.download_image(figure.url, filename, pmid)
+                            print(f"    ✓ Downloaded figure {figure_number}")
+                        except Exception as download_error:
+                            print(
+                                f"    ⚠ Failed to download figure {figure_number}: {download_error}"
+                            )
+
+        except Exception as scan_error:
+            print(f"  ⚠ Figure scanning failed for {pmid}: {scan_error}")
+            result["scan_error"] = str(scan_error)
+            result["success"] = True  # Still success because we saved metadata
             return result
 
-        # Download relevant figures
-        for i, figure in enumerate(figures):
-            figure_number = i + 1
-            if figure_number in scan_result.relevant_figure_numbers:
-                # Store relevant figure info
-                result["relevant_figures"][figure_number] = {
-                    "url": figure.url,
-                    "alt_text": figure.alt,
-                    "caption": figure.caption,
-                    "keywords_found": scan_result.keyword_matches[figure_number],
-                }
+        # Step 5: Extract text context for LLM (only if we have content and relevant figures)
+        figure_contexts = []
+        figure_map = {}
 
-                # Download the figure image
-                if figure.url:
-                    file_ext = (
-                        figure.url.split(".")[-1]
-                        if "." in figure.url.split("/")[-1]
-                        else "jpg"
-                    )
-                    filename = f"figure_{figure_number}.{file_ext}"
-                    pubmed_client.download_image(figure.url, filename, pmid)
-
-        # Extract text context for LLM input preparation
         if article.content and result["relevant_figures"]:
             try:
-                figure_contexts = []
-
                 # Create a mapping of figure numbers to Figure objects
                 figure_map = {i + 1: fig for i, fig in enumerate(figures)}
 
@@ -879,18 +959,14 @@ def process_article_figures_and_pages(
                         figure_data = figure_map[fig_num]
 
                         # Extract context for this figure with flexible options
-                        # You can modify these parameters as needed:
-                        # - include_surrounding_text=True: includes surrounding text + caption
-                        # - include_surrounding_text=False: only caption
-                        # - context_words: amount of surrounding text (ignored if include_surrounding_text=False)
                         combined_text, image_path = extract_figure_text(
                             article_text=article.content,
                             figure_number=fig_num,
                             figure_data=figure_data,
                             pmid=pmid,
                             base_dir=pubmed_client.base_dir,
-                            include_surrounding_text=True,  # Set to False for caption only
-                            context_words=250,  # Adjust number of surrounding words
+                            include_surrounding_text=True,
+                            context_words=250,
                         )
 
                         figure_contexts.append(
@@ -905,37 +981,57 @@ def process_article_figures_and_pages(
                         )
 
                 result["figure_contexts"] = figure_contexts
-                print(f"Extracted contexts for {len(figure_contexts)} figures")
+                print(f"  ✓ Extracted contexts for {len(figure_contexts)} figures")
 
-            except Exception as e:
-                print(f"Warning: Could not prepare LLM context for {pmid}: {e}")
+            except Exception as context_error:
+                print(f"  ⚠ Could not prepare LLM context for {pmid}: {context_error}")
+                result["context_error"] = str(context_error)
 
-        # Process figures with image segmentation to detect plots
+        # Step 6: Process figures with image segmentation (if we have relevant figures)
         if result["relevant_figures"]:
-            print(f"Processing bounding boxes for {pmid}...")
-            figure_contexts_to_pass = result.get("figure_contexts", None)
-            bbox_result = process_figure_bounding_boxes(
-                pmid,
-                pubmed_client.base_dir,
-                openai_api_key,
-                figure_contexts_to_pass,
-                article.content,  # Pass article content
-                figure_map,  # Pass figure mapping
-            )
-            result["bbox_processing"] = bbox_result
-
-            if bbox_result["success"]:
-                print(f"✓ Bounding box processing completed for {pmid}")
-                print(f"  Total plots detected: {bbox_result['total_plots_detected']}")
-            else:
-                print(
-                    f"✗ Bounding box processing failed for {pmid}: {bbox_result['error']}"
+            try:
+                print(f"  Processing bounding boxes for {pmid}...")
+                figure_contexts_to_pass = result.get("figure_contexts", None)
+                bbox_result = process_figure_bounding_boxes(
+                    pmid,
+                    pubmed_client.base_dir,
+                    openai_api_key,
+                    figure_contexts_to_pass,
+                    article.content,  # Pass article content (may be None)
+                    figure_map,  # Pass figure mapping
                 )
+                result["bbox_processing"] = bbox_result
 
+                if bbox_result["success"]:
+                    print(f"  ✓ Bounding box processing completed for {pmid}")
+                    print(
+                        f"    Total plots detected: {bbox_result['total_plots_detected']}"
+                    )
+                else:
+                    print(
+                        f"  ⚠ Bounding box processing failed for {pmid}: {bbox_result['error']}"
+                    )
+
+            except Exception as bbox_error:
+                print(f"  ⚠ Bounding box processing error for {pmid}: {bbox_error}")
+                result["bbox_error"] = str(bbox_error)
+
+        # Mark as successful since we at least saved metadata
         result["success"] = True
 
     except Exception as e:
         result["error"] = str(e)
+        print(f"  ✗ Critical error processing {pmid}: {e}")
+
+        # Even if there's a critical error, try to save basic metadata if we got it
+        if article:
+            try:
+                pubmed_client.save_article_to_json(article)
+                result["metadata_saved"] = True
+                result["success"] = True  # Partial success
+                print(f"  ✓ Saved metadata despite error for {pmid}")
+            except Exception as save_error:
+                print(f"  ✗ Failed to save metadata for {pmid}: {save_error}")
 
     return result
 
@@ -955,23 +1051,19 @@ def main(
         search_term: PubMed search term when using 'search' strategy
         max_results: Maximum number of results when using 'search' strategy
     """
-    # Load environment variables
-    load_dotenv()
+    # Load and validate configuration
+    config = get_config()
 
-    email = os.getenv("EMAIL")
-    if not email:
+    if not config.validate():
         raise ValueError(
-            "EMAIL environment variable is not set. Please set it in your .env file."
+            "Configuration validation failed. Please check your .env file."
         )
 
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    if not openai_api_key:
-        raise ValueError(
-            "OPENAI_API_KEY environment variable is not set. Please set it in your .env file."
-        )
+    email = config.email
+    openai_api_key = config.openai_api_key
 
     # Initialize client
-    pubmed_client = PubMedClient(email=email, base_dir="articles_data")
+    pubmed_client = PubMedClient(email=email, base_dir=config.base_dir)
 
     # Try to load existing publisher statistics if available
     publisher_tracker = get_publisher_tracker()
@@ -1045,9 +1137,47 @@ def main(
         print(f"Result keys: {list(result.keys())}")
 
         if result["success"]:
-            print(f"✓ Successfully processed {pmid}")
+            # Determine the level of success
+            success_level = "✓ FULL"
+            if not result.get("content_accessible", False):
+                success_level = "✓ PARTIAL (metadata only)"
+            elif not result.get("relevant_figures"):
+                success_level = "✓ PARTIAL (no relevant figures)"
+            elif result.get("error"):
+                success_level = "✓ PARTIAL (with issues)"
+
+            print(f"{success_level} - Successfully processed {pmid}")
             print(f"  Title: {result['article']['title']}")
-            print(f"  Relevant figures: {list(result['relevant_figures'].keys())}")
+            print(f"  Publisher: {result['article'].get('publisher', 'Unknown')}")
+            print(f"  Journal: {result['article'].get('journal', 'Unknown')}")
+            print(f"  DOI: {result['article'].get('doi', 'N/A')}")
+            print(f"  PMCID: {result['article'].get('pmcid', 'N/A')}")
+
+            # Content accessibility status
+            if result.get("content_accessible"):
+                content_info = result["article"].get("source", "unknown source")
+                content_length = len(result["article"].get("content", ""))
+                print(
+                    f"  Content: ✓ Accessible ({content_info}, {content_length} chars)"
+                )
+            else:
+                print(f"  Content: ⚠ Not accessible (paywall/restricted)")
+                if result.get("content_error"):
+                    print(f"    Error: {result['content_error']}")
+
+            # Metadata saving status
+            if result.get("metadata_saved"):
+                print(f"  Metadata: ✓ Saved to articles_data/{pmid}/")
+
+            # Figures status
+            if result.get("relevant_figures"):
+                print(f"  Relevant figures: {list(result['relevant_figures'].keys())}")
+            else:
+                print(f"  Relevant figures: None found")
+
+            # Error information if any
+            if result.get("error"):
+                print(f"  Issue: {result['error']}")
 
             # Display figure context info if available
             if "figure_contexts" in result:
@@ -1181,8 +1311,8 @@ if __name__ == "__main__":
     # results = main(strategy="json")
 
     # Strategy 2: Use specific PMID list
-    # results = main(strategy="list", pmid_list=["19258323", "18350169"])
+    results = main(strategy="list", pmid_list=["40749445", "19258323", "18350169"])
 
     # Strategy 3: Use PubMed search
-    search_term = "(protein aggregation) AND (ThT OR thioflavin)"
-    results = main(strategy="search", search_term=search_term, max_results=100)
+    # search_term = "(protein aggregation) AND (ThT OR thioflavin)"
+    # results = main(strategy="search", search_term=search_term, max_results=20)

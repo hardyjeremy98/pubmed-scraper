@@ -17,7 +17,7 @@ class PubMedClient:
     def __init__(self, email: str, base_dir: str = "articles_data"):
         self.base_dir = base_dir
         self.http_session = HTTPSession()
-        self.metadata_fetcher = DataFetcher(email, self.http_session)
+        self.data_fetcher = DataFetcher(email, self.http_session)
         self.pdf_downloader = PDFDownloader(self.http_session, base_dir)
         self.image_downloader = ImageDownloader(self.http_session, base_dir)
         self.article_manager = ArticleManager()
@@ -42,14 +42,14 @@ class PubMedClient:
 
     def get_article_metadata(self, pmid: str) -> ArticleMetadata:
         """Get article metadata."""
-        return self.metadata_fetcher.get_article_metadata(pmid)
+        return self.data_fetcher.get_article_metadata(pmid)
 
     def get_full_article(self, pmid: str) -> ArticleMetadata:
         """Get complete article data including full text or abstract."""
         # Get basic metadata first
-        article = self.metadata_fetcher.get_article_metadata(pmid)
+        article = self.data_fetcher.get_article_metadata(pmid)
         # Get content
-        return self.metadata_fetcher.get_full_article_content(article)
+        return self.data_fetcher.get_full_article_content(article)
 
     def download_pdf_from_pmcid(self, pmcid: str, pmid: str, **kwargs) -> None:
         """Download PDF for a given PMCID."""
@@ -64,7 +64,7 @@ class PubMedClient:
         article = self.get_article_metadata(pmid)
         if article.pmcid:
             # Get HTML content through ContentFetcher to use caching
-            html_content = self.metadata_fetcher.get_html_content(article)
+            html_content = self.data_fetcher.get_html_content(article)
             if html_content:
                 pmc_url = create_pmc_url(article.pmcid)
                 return self.image_downloader.get_pmc_figures_from_html(
@@ -84,7 +84,7 @@ class PubMedClient:
     def get_article_html(self, pmid: str) -> Optional[str]:
         """Extract raw HTML content from PMC article if available."""
         article = self.get_article_metadata(pmid)
-        return self.metadata_fetcher.get_html_content(article)
+        return self.data_fetcher.get_html_content(article)
 
     def save_article_html(
         self, html_content: str, pmid: str, base_dir: str = None
@@ -135,11 +135,11 @@ class PubMedClient:
 
     def get_cached_article(self, pmid: str) -> Optional[ArticleMetadata]:
         """Get article from cache if available."""
-        return self.metadata_fetcher.get_cached_article(pmid)
+        return self.data_fetcher.get_cached_article(pmid)
 
     def clear_cache(self) -> None:
         """Clear the article cache."""
-        self.metadata_fetcher.clear_cache()
+        self.data_fetcher.clear_cache()
 
     def _candidate_pdf_urls(self, pmcid: str) -> list[str]:
         """Generate candidate PDF URLs for a given PMCID."""

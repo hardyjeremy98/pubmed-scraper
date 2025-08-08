@@ -5,7 +5,7 @@ import ast
 import re
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
-from dotenv import load_dotenv
+from config import get_config
 from utils import (
     process_csv_file,
     map_csv_data_to_conditions,
@@ -110,18 +110,16 @@ def find_matching_csv_files(
         articles_data_dir: Directory containing PMID folders
         cleaned_tables_dir: Directory containing cleaned CSV files
     """
-    # Load environment variables
-    load_dotenv()
+    # Load and validate configuration
+    config = get_config()
 
     # Initialize LLM extractor
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    if not openai_api_key:
-        print(
-            "Warning: OPENAI_API_KEY environment variable not set. LLM processing will be skipped."
-        )
-        llm_extractor = None
-    else:
+    try:
+        openai_api_key = config.openai_api_key
         llm_extractor = LLMDataExtractor(openai_api_key)
+    except ValueError as e:
+        print(f"Warning: {e}. LLM processing will be skipped.")
+        llm_extractor = None
 
     # Get all PMID folders
     pmid_folders = [

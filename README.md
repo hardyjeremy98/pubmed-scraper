@@ -9,6 +9,8 @@ A comprehensive Python toolkit for scraping scientific literature from PubMed/PM
 - **📄 Full-text Retrieval**: Download complete article content and metadata
 - **🖼️ Figure Extraction**: Automatically extract and download figures from PMC articles
 - **📁 PDF Downloads**: Download full-text PDFs when available
+- **📚 Elsevier API Integration**: Enhanced access to ScienceDirect articles with full-text content
+- **🔐 Secure Configuration**: Encrypted API key management and credential storage
 
 ### Advanced Data Extraction
 - **🧪 ThT Plot Detection**: AI-powered identification of Thioflavin T fluorescence plots
@@ -20,8 +22,9 @@ A comprehensive Python toolkit for scraping scientific literature from PubMed/PM
 ### Smart Processing
 - **💾 Structured Storage**: Hierarchical folder organization
 - **⚡ Smart Caching**: Avoid redundant API calls
-- **🔄 Multiple Sources**: Fallback between APIs for maximum coverage
+- **🔄 Multiple Sources**: Fallback between APIs for maximum coverage (PMC, PubMed, ScienceDirect)
 - **🤖 LLM Integration**: GPT-4 powered experimental condition extraction
+- **🏢 Publisher Tracking**: Automatic identification and statistics for article publishers
 
 ## 🚀 Complete Workflow
 
@@ -99,10 +102,12 @@ The toolkit implements a complete 3-step workflow for extracting ThT fluorescenc
    ```env
    EMAIL=your.email@example.com
    OPENAI_API_KEY=your_openai_api_key_here
+   ELSEVIER_API_KEY=your_elsevier_api_key_here
    ```
    > **Note**: 
    > - Email is required by NCBI's Entrez API
    > - OpenAI API key is required for LLM-powered data extraction
+   > - Elsevier API key enables enhanced access to ScienceDirect articles (optional but recommended)
 
 4. **Download YOLO model for plot detection**:
    The toolkit requires a trained YOLO model (`plot_detector1.pt`) for AI-powered ThT plot identification. This model should be placed in the project root directory.
@@ -215,12 +220,43 @@ for idx, row in df.iterrows():
 ```
 ## ⚙️ Configuration
 
-### Environment Variables
+### Quick Setup (Recommended)
+
+```bash
+# Interactive configuration setup
+python3 config.py setup
+
+# Validate configuration
+python3 config.py validate
+
+# Test Elsevier API integration
+python3 test_elsevier.py
+```
+
+### Manual Configuration
+
+#### Environment Variables
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `EMAIL` | Your email address for NCBI API identification | Yes |
+| `PUBMED_EMAIL` | Your email address for NCBI API identification | Yes |
 | `OPENAI_API_KEY` | OpenAI API key for LLM-powered extraction | Yes |
+| `ELSEVIER_API_KEY` | Elsevier API key for ScienceDirect access | Optional |
+
+#### Elsevier API Setup
+
+For enhanced access to Elsevier/ScienceDirect articles:
+
+1. **Get API Key**: Visit [Elsevier Developer Portal](https://dev.elsevier.com/)
+2. **Configure**: Run `python3 config.py setup` or set `ELSEVIER_API_KEY` environment variable
+3. **Test**: Run `python3 test_elsevier.py` to verify access
+
+**Benefits of Elsevier API**:
+- Access full-text content from ScienceDirect articles
+- Higher quality content extraction than web scraping
+- Automatic fallback to PMC/PubMed for non-Elsevier content
+
+For detailed Elsevier integration information, see [ELSEVIER_README.md](ELSEVIER_README.md).
 
 ### External Plot Digitization
 

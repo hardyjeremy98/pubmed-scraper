@@ -1,4 +1,5 @@
 from typing import Optional, Dict
+import os
 from Bio import Entrez
 from bs4 import BeautifulSoup
 from utils import ArticleMetadata, create_pmc_url
@@ -12,7 +13,7 @@ class DataFetcher:
         Entrez.email = email
         self.http_session = http_session
         self._cache: Dict[str, ArticleMetadata] = {}
-        self._html_cache: Dict[str, str] = {}  # Cache HTML content by PMC URL
+        self._html_cache: Dict[str, str] = {}
 
     def get_article_metadata(self, pmid: str) -> ArticleMetadata:
         """
