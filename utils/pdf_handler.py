@@ -6,8 +6,8 @@ from typing import List, Optional, Set, Dict, Tuple
 import requests
 from bs4 import BeautifulSoup
 import fitz  # PyMuPDF
-from utils import ensure_pmid_directory
-from http_session import HTTPSession
+from utils.utils import ensure_pmid_directory
+from article_processing.http_session import HTTPSession
 
 
 class PageExtractor:

@@ -3,8 +3,8 @@ from typing import List, Optional
 from pathlib import Path
 from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
-from utils import Figure
-from http_session import HTTPSession
+from utils.utils import Figure
+from article_processing.http_session import HTTPSession
 
 
 class ImageDownloader:

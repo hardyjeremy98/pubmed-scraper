@@ -1,7 +1,7 @@
 from openai import OpenAI
 import base64
 import os
-from config import Config
+from main.config import Config
 
 
 class LLMDataExtractor:

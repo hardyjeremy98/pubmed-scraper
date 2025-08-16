@@ -4,9 +4,9 @@ import json
 import requests
 from Bio import Entrez
 from bs4 import BeautifulSoup
-from utils import ArticleMetadata, create_pmc_url
-from http_session import HTTPSession
-from config import Config
+from utils.utils import ArticleMetadata, create_pmc_url
+from article_processing.http_session import HTTPSession
+from main.config import Config
 
 
 class DataFetcher:

@@ -6,19 +6,19 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from pubmed_scraper import PubMedClient
-from pdf_handler import PageExtractor
-from figure_scanner import scan_article_figures_for_keywords
-from llm_input_prep import extract_figure_text
-from llm_data_extractor import LLMDataExtractor
-from image_segmenter import PlotDetector, BoundingBoxLabeler
-from utils import (
+from article_processing.pubmed_scraper import PubMedClient
+from utils.pdf_handler import PageExtractor
+from article_processing.figure_scanner import scan_article_figures_for_keywords
+from article_processing.llm_input_prep import extract_figure_text
+from article_processing.llm_data_extractor import LLMDataExtractor
+from article_processing.image_segmenter import PlotDetector, BoundingBoxLabeler
+from utils.utils import (
     merge_constants_and_variables,
     create_clean_merged_file,
     track_publisher,
     get_publisher_tracker,
 )
-from config import get_config, Config
+from main.config import get_config, Config
 
 
 def identify_tht_plots(
