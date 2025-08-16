@@ -1034,6 +1034,7 @@ def main(
     pmid_list: List[str] = None,
     search_term: str = None,
     max_results: int = 10,
+    skip_processed: bool = True,
 ):
     """
     Main function to process literature articles.
@@ -1043,6 +1044,7 @@ def main(
         pmid_list: List of PMIDs when using 'list' strategy
         search_term: PubMed search term when using 'search' strategy
         max_results: Maximum number of results when using 'search' strategy
+        skip_processed: Whether to skip articles that have already been processed in the database
     """
     # Load and validate configuration
     config = get_config()
@@ -1121,11 +1123,19 @@ def main(
 
     processed_articles = []
 
+    # Inform user about skip behavior
+    if skip_processed:
+        print(
+            f"✓ Skipping already processed articles (set skip_processed=False to reprocess all)"
+        )
+    else:
+        print(f"⚠ Will reprocess all articles, including those already in database")
+
     for i, pmid in enumerate(pmids, 1):
         print(f"Processing PMID: {pmid} ({i}/{len(pmids)})")
 
-        # Check if PMID has already been processed
-        if db_manager.is_pmid_processed(pmid):
+        # Check if PMID has already been processed (only if skip_processed is True)
+        if skip_processed and db_manager.is_pmid_processed(pmid):
             print(f"  ⏩ PMID {pmid} has already been processed, retrieving status...")
             pmid_status = db_manager.get_pmid_status(pmid)
 
@@ -1435,9 +1445,11 @@ if __name__ == "__main__":
 
     # Strategy 2: Use specific PMID list
     results = main(
-        strategy="list", pmid_list=["40749445", "40678799", "19258323", "18350169"]
+        strategy="list",
+        pmid_list=["40749445", "40678799", "19258323", "18350169"],
+        skip_processed=False,  # Set to False to reprocess already processed articles
     )
 
     # Strategy 3: Use PubMed search
     # search_term = "(protein aggregation) AND (ThT OR thioflavin)"
-    # results = main(strategy="search", search_term=search_term, max_results=20)
+    # results = main(strategy="search", search_term=search_term, max_results=20, skip_processed=True)
