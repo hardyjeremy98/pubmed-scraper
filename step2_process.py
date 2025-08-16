@@ -5,7 +5,7 @@ import ast
 import re
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
-from main.config import get_config
+from config import get_config
 from utils.utils import (
     process_csv_file,
     map_csv_data_to_conditions,

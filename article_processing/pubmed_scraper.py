@@ -9,7 +9,7 @@ from utils.pdf_handler import PDFDownloader
 from article_processing.figure_handler import ImageDownloader
 from utils.storage import ArticleManager
 from utils.utils import ArticleMetadata, Figure
-from main.config import Config
+from config import Config
 
 
 class PubMedClient:

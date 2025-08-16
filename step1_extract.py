@@ -20,7 +20,7 @@ from utils.utils import (
     get_publisher_tracker,
 )
 from utils.pmid_database import PMIDDatabase
-from main.config import get_config, Config
+from config import get_config, Config
 
 
 def identify_tht_plots(

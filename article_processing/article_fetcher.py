@@ -6,7 +6,7 @@ from Bio import Entrez
 from bs4 import BeautifulSoup
 from utils.utils import ArticleMetadata, create_pmc_url
 from article_processing.http_session import HTTPSession
-from main.config import Config
+from config import Config
 
 
 class DataFetcher:
