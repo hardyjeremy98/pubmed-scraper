@@ -166,7 +166,8 @@ def ensure_pmid_directory(pmid: str, base_dir: str = "data/articles_data") -> st
         subdir_path = os.path.join(pmid_dir, subdir)
         if not os.path.exists(subdir_path):
             os.makedirs(subdir_path, exist_ok=True)
-
+            
+    return pmid_dir
 
 @dataclass
 class ArticleMetadata:

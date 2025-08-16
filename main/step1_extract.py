@@ -6,18 +6,19 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from article_processing.pubmed_scraper import PubMedClient
-from utils.pdf_handler import PageExtractor
-from article_processing.figure_scanner import scan_article_figures_for_keywords
-from article_processing.llm_input_prep import extract_figure_text
-from article_processing.llm_data_extractor import LLMDataExtractor
-from article_processing.image_segmenter import PlotDetector, BoundingBoxLabeler
-from utils.utils import (
+from ..article_processing.pubmed_scraper import PubMedClient
+from ..utils.pdf_handler import PageExtractor
+from ..article_processing.figure_scanner import scan_article_figures_for_keywords
+from ..article_processing.llm_input_prep import extract_figure_text
+from ..article_processing.llm_data_extractor import LLMDataExtractor
+from ..article_processing.image_segmenter import PlotDetector, BoundingBoxLabeler
+from ..utils.utils import (
     merge_constants_and_variables,
     create_clean_merged_file,
     track_publisher,
     get_publisher_tracker,
 )
+from utils.pmid_database import PMIDDatabase
 from main.config import get_config, Config
 
 
@@ -1056,6 +1057,10 @@ def main(
     # Initialize client with config
     pubmed_client = PubMedClient(config)
 
+    # Initialize database manager
+    db_manager = PMIDDatabase()
+    print(f"Connected to PMID database at {db_manager.db_path}")
+
     # Try to load existing publisher statistics if available
     publisher_tracker = get_publisher_tracker()
     stats_file = "data/publisher_statistics.json"
@@ -1121,6 +1126,79 @@ def main(
     for i, pmid in enumerate(pmids, 1):
         print(f"Processing PMID: {pmid} ({i}/{len(pmids)})")
 
+        # Check if PMID has already been processed
+        if db_manager.is_pmid_processed(pmid):
+            print(f"  ⏩ PMID {pmid} has already been processed, retrieving status...")
+            pmid_status = db_manager.get_pmid_status(pmid)
+
+            # Add to pmid_list even if already processed to maintain correct count
+            processed_articles.append(
+                {
+                    "pmid": pmid,
+                    "success": True,
+                    "already_processed": True,
+                    "article": {
+                        "title": "Previously Processed",
+                        "publisher": pmid_status.get("publisher", "Unknown"),
+                    },
+                    "figures_count": len(pmid_status.get("figures", [])),
+                    "tht_plots_count": len(pmid_status.get("tht_plots", [])),
+                }
+            )
+
+            # Show detailed status information
+            print(
+                f"  ✓ Found in database - Processed on {pmid_status.get('processing_date', 'Unknown date')}"
+            )
+
+            # Show publisher information
+            if pmid_status.get("publisher"):
+                print(f"  Publisher: {pmid_status.get('publisher', 'Unknown')}")
+
+            # Show additional status information
+            status_flags = []
+            if pmid_status.get("has_metadata", False):
+                status_flags.append("Has metadata")
+            if pmid_status.get("has_figures", False):
+                status_flags.append("Has figures")
+            if pmid_status.get("has_pdf", False):
+                status_flags.append("Has PDF")
+            if pmid_status.get("error"):
+                status_flags.append(f"With error: {pmid_status['error']}")
+
+            if status_flags:
+                print(f"  Status: {', '.join(status_flags)}")
+
+            # Display figure information if available
+            figures = db_manager.get_figures(pmid)
+            if figures:
+                print(f"  Contains {len(figures)} figures:")
+                for figure in figures:
+                    tht_info = ""
+                    if figure.get("has_tht_plots", False):
+                        tht_info = (
+                            f" (with {figure.get('tht_plot_count', 0)} ThT plots)"
+                        )
+                    print(
+                        f"    Figure {figure['figure_id']}: {figure.get('figure_name', '')}{tht_info}"
+                    )
+
+                # Display ThT plot information if available
+                tht_plots = db_manager.get_tht_plots(pmid)
+                if tht_plots:
+                    print(f"  Contains {len(tht_plots)} ThT plots:")
+                    for plot in tht_plots:
+                        extraction_status = (
+                            "Extracted"
+                            if plot.get("extracted", False)
+                            else "Not extracted"
+                        )
+                        print(
+                            f"    Figure {plot['figure_id']}, Plot {plot['plot_number']}: {extraction_status}"
+                        )
+
+            continue
+
         result = process_article_figures_and_pages(pmid, pubmed_client, config)
         processed_articles.append(result)
 
@@ -1143,6 +1221,60 @@ def main(
             print(f"  Journal: {result['article'].get('journal', 'Unknown')}")
             print(f"  DOI: {result['article'].get('doi', 'N/A')}")
             print(f"  PMCID: {result['article'].get('pmcid', 'N/A')}")
+
+            # Update the database with processing information
+            db_manager.mark_pmid_as_processed(
+                pmid=pmid,
+                publisher=result["article"].get("publisher"),
+                has_metadata=True,
+                has_figures=bool(result.get("figures")),
+                has_pdf=bool(result.get("pdf_path")),
+                error=result.get("error"),
+            )
+
+            # Add figures to the database if available
+            if "figures" in result and result["figures"]:
+                for figure in result["figures"]:
+                    figure_id = figure.get("id")
+                    if figure_id is not None:
+                        db_manager.add_figure(
+                            pmid=pmid,
+                            figure_id=figure_id,
+                            figure_name=figure.get("name", f"Figure {figure_id}"),
+                            caption=figure.get("caption", ""),
+                        )
+
+            # Add ThT plots to the database if available
+            if "relevant_figures" in result and result["relevant_figures"]:
+                for figure_name, figure_data in result["relevant_figures"].items():
+                    if (
+                        "tht_plot_numbers" in figure_data
+                        and figure_data["tht_plot_numbers"]
+                    ):
+                        # Extract figure number from name (e.g., "figure_3" -> 3)
+                        import re
+
+                        match = re.search(r"figure_(\d+)", figure_name)
+                        if match:
+                            figure_id = int(match.group(1))
+
+                            # Update figure with ThT information
+                            db_manager.add_figure(
+                                pmid=pmid,
+                                figure_id=figure_id,
+                                figure_name=figure_name,
+                                has_tht_plots=True,
+                                tht_plot_count=len(figure_data["tht_plot_numbers"]),
+                            )
+
+                            # Add individual ThT plots
+                            for plot_num in figure_data["tht_plot_numbers"]:
+                                db_manager.add_tht_plot(
+                                    pmid=pmid,
+                                    figure_id=figure_id,
+                                    plot_number=plot_num,
+                                    extracted=False,
+                                )
 
             # Content accessibility status
             if result.get("content_accessible"):
@@ -1291,6 +1423,10 @@ def main(
     # Display final publisher statistics summary
     publisher_tracker = get_publisher_tracker()
     publisher_tracker.print_stats(detailed=True)
+
+    # Close the database connection
+    print("Closing PMID database connection...")
+    db_manager.close()
 
     return processed_articles
 

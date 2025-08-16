@@ -1,7 +1,7 @@
 import re
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
-from utils import Figure
+from utils.utils import Figure
 
 
 @dataclass

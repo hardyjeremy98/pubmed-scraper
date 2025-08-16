@@ -5,6 +5,7 @@ articles_data/
 bbox/
 images/
 figures/
+data/
 *.tsv
 *.ipynb
 *.csv
@@ -15,3 +16,4 @@ figures/
 model_cache/
 *.md
 *.pt
+*.db
