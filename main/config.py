@@ -31,7 +31,7 @@ class Config:
         self._elsevier_api_key = os.getenv("ELSEVIER_API_KEY")
 
         # Optional environment variables with defaults
-        self._base_dir = os.getenv("BASE_DIR", "articles_data")
+        self._base_dir = os.getenv("BASE_DIR", "data/articles_data")
         self._max_retries = int(os.getenv("MAX_RETRIES", "3"))
         self._request_timeout = int(os.getenv("REQUEST_TIMEOUT", "30"))
         self._plot_detection_confidence = float(

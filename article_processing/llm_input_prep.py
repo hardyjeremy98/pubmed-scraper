@@ -9,60 +9,32 @@ import os
 import json
 import pandas as pd
 from typing import Dict, Tuple, Optional
-from utils import Figure
+from utils.utils import Figure
+
+
+import os
+import json
+from typing import Dict, List, Any, Optional, Tuple
 
 
 def extract_figure_text(
-    article_text: str,
-    figure_number: int,
-    figure_data: Figure,
     pmid: str,
-    base_dir: str = "articles_data",
-    include_surrounding_text: bool = True,
-    context_words: int = 250,
-) -> Tuple[str, str]:
+    figure_number: int,
+    base_dir: str = "data/articles_data",
+) -> Dict[str, Any]:
     """
-    Extract text context for a single figure with flexible options.
+    Extract text associated with a figure from an article.
 
     Args:
-        article_text: Full text content of the article
-        figure_number: Figure number to process
-        figure_data: Figure object with metadata
-        pmid: PubMed ID for constructing image path
-        base_dir: Base directory for article data
-        include_surrounding_text: If True, includes surrounding text; if False, only caption
-        context_words: Number of words to extract before and after figure references (ignored if include_surrounding_text=False)
+        pmid: The PubMed ID of the article
+        figure_number: The figure number to extract text for
+        base_dir: Base directory where article data is stored
 
     Returns:
-        Tuple of (combined_text, image_path)
+        Dictionary with extracted text and metadata
     """
-    # Start with the figure caption
-    caption_text = figure_data.caption.strip() if figure_data.caption else ""
-
-    if not include_surrounding_text:
-        # Return just the caption
-        combined_text = caption_text
-    else:
-        # Extract surrounding text and combine with caption
-        preceding_text, following_text = _extract_surrounding_text(
-            article_text, figure_number, figure_data, context_words
-        )
-
-        # Combine caption with surrounding text
-        text_parts = []
-        if preceding_text:
-            text_parts.append(preceding_text)
-        if caption_text:
-            text_parts.append(f"Figure {figure_number} Caption: {caption_text}")
-        if following_text:
-            text_parts.append(following_text)
-
-        combined_text = " ".join(text_parts)
-
-    # Construct image path
+    # Construct path to figure image
     image_path = os.path.join(base_dir, pmid, "images", f"figure_{figure_number}.jpg")
-
-    return combined_text, image_path
 
 
 def _extract_surrounding_text(

@@ -153,11 +153,19 @@ def create_pmc_url(pmcid: str) -> str:
     return f"https://pmc.ncbi.nlm.nih.gov/articles/{pmcid}"
 
 
-def ensure_pmid_directory(pmid: str, base_dir: str = "articles_data") -> str:
-    """Create and return PMID-specific directory path."""
+def ensure_pmid_directory(pmid: str, base_dir: str = "data/articles_data") -> str:
+    """Create PMID directory structure if it doesn't exist and return its path."""
     pmid_dir = os.path.join(base_dir, pmid)
-    os.makedirs(pmid_dir, exist_ok=True)
-    return pmid_dir
+
+    if not os.path.exists(pmid_dir):
+        os.makedirs(pmid_dir, exist_ok=True)
+        print(f"Created directory: {pmid_dir}")
+
+    # Create subdirectories
+    for subdir in ["images", "html", "pdf", "experimental_conditions"]:
+        subdir_path = os.path.join(pmid_dir, subdir)
+        if not os.path.exists(subdir_path):
+            os.makedirs(subdir_path, exist_ok=True)
 
 
 @dataclass
@@ -297,17 +305,17 @@ def analyze_data_completeness(df: pd.DataFrame) -> Dict[str, Any]:
 
 
 def process_csv_file(
-    filepath: str, output_dir: str = "cleaned_tables"
+    filepath: str, output_dir: str = "data/cleaned_tables"
 ) -> Dict[str, Any]:
     """
-    Process a CSV file with automatic reformatting and save cleaned version.
+    Process a CSV file and save the cleaned version.
 
     Args:
-        filepath: Path to input CSV file
-        output_dir: Directory to save cleaned file
+        filepath: Path to the input CSV file
+        output_dir: Directory to save the cleaned CSV file
 
     Returns:
-        dict: Processing results and metadata
+        Dictionary with processing results and metadata
     """
     import os
     from pathlib import Path
@@ -646,21 +654,18 @@ def save_mapped_data_to_json(mapped_data: Dict[str, Any], output_file: str) -> b
 
 
 def consolidate_final_data_to_csv(
-    final_data_dir: str = "final_data",
+    final_data_dir: str = "data/final_data",
     output_file: str = "consolidated_experimental_data.csv",
 ) -> bool:
     """
-    Consolidate all JSON files in final_data directory into a single CSV file.
-
-    Each row represents one experimental condition with Time and Fluorescence as list columns.
-    Columns include all experimental parameters plus Time (as list), Fluorescence (as list), PMID, Figure, Plot, and Legend Symbol.
+    Consolidate all mapped data JSON files into a single CSV file.
 
     Args:
-        final_data_dir: Directory containing the mapped data JSON files
-        output_file: Path where the consolidated CSV should be saved
+        final_data_dir: Directory containing mapped data JSON files
+        output_file: Path to the output CSV file
 
     Returns:
-        bool: True if successful, False if failed
+        True if successful, False otherwise
     """
     try:
         import json

@@ -122,7 +122,8 @@ def create_standardized_filename(pmid: str, figure_name: str, plot_number: int) 
 
 
 def compile_tht_images(
-    base_dir: str = "articles_data", output_dir: str = "images_for_digitisation"
+    base_dir: str = "data/articles_data",
+    output_dir: str = "data/images_for_digitisation",
 ) -> Dict:
     """
     Compile all ThT plot images into a single directory with standardized naming.
@@ -275,13 +276,13 @@ if __name__ == "__main__":
 
     # Run the compilation
     results = compile_tht_images(
-        base_dir="articles_data", output_dir="images_for_digitisation"
+        base_dir="data/articles_data", output_dir="data/images_for_digitisation"
     )
 
     # Print final status
     if results["success"]:
         print(f"\n✓ Successfully compiled {results['images_copied']} ThT plot images!")
-        print(f"  Output folder: images_for_digitisation/")
+        print(f"  Output folder: data/images_for_digitisation/")
         print(f"  Ready for external digitization tools.")
     else:
         print(f"\n✗ Compilation failed or no images found.")

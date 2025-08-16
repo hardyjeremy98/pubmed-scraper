@@ -131,7 +131,9 @@ class PubMedClient:
             base_dir = self.base_dir
         return self.article_manager.save_figures_to_json(figures, pmid, base_dir)
 
-    def load_pmids_from_json(self, json_file: str = "unique_pmids.json") -> List[str]:
+    def load_pmids_from_json(
+        self, json_file: str = "data/unique_pmids.json"
+    ) -> List[str]:
         """Load PMIDs from JSON file."""
         return self.article_manager.load_pmids_from_json(json_file)
 

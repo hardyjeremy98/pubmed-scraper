@@ -321,12 +321,18 @@ class PDFFinder:
 
 
 class PDFDownloader:
-    """Handles PDF downloading functionality."""
+    """Downloads PDF files for PMC articles."""
 
-    def __init__(self, http_session: HTTPSession, base_dir: str = "articles_data"):
+    def __init__(self, http_session: HTTPSession, base_dir: str = "data/articles_data"):
+        """
+        Initialize PDFDownloader with HTTP session.
+
+        Args:
+            http_session: Session for making HTTP requests
+            base_dir: Base directory for saving PDFs
+        """
         self.http_session = http_session
         self.base_dir = base_dir
-        self.pdf_finder = PDFFinder(http_session)
 
     def download_pdf_from_pmcid(
         self,

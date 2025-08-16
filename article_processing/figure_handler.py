@@ -10,7 +10,7 @@ from article_processing.http_session import HTTPSession
 class ImageDownloader:
     """Handles figure extraction and downloading functionality."""
 
-    def __init__(self, http_session: HTTPSession, base_dir: str = "articles_data"):
+    def __init__(self, http_session: HTTPSession, base_dir: str = "data/articles_data"):
         self.http_session = http_session
         self.base_dir = base_dir
 

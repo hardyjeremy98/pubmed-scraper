@@ -1058,7 +1058,7 @@ def main(
 
     # Try to load existing publisher statistics if available
     publisher_tracker = get_publisher_tracker()
-    stats_file = "publisher_statistics.json"
+    stats_file = "data/publisher_statistics.json"
     if os.path.exists(stats_file):
         print(f"Loading existing publisher statistics from {stats_file}")
         publisher_tracker.load_from_file(stats_file)
@@ -1074,14 +1074,14 @@ def main(
     if strategy == "json":
         # Load PMIDs from JSON file
         try:
-            with open("unique_pmids.json", "r") as f:
+            with open("data/unique_pmids.json", "r") as f:
                 pmids = json.load(f)
-            print(f"Loaded {len(pmids)} PMIDs from unique_pmids.json")
+            print(f"Loaded {len(pmids)} PMIDs from data/unique_pmids.json")
         except FileNotFoundError:
-            print("Error: unique_pmids.json file not found")
+            print("Error: data/unique_pmids.json file not found")
             return []
         except json.JSONDecodeError:
-            print("Error: Invalid JSON format in unique_pmids.json")
+            print("Error: Invalid JSON format in data/unique_pmids.json")
             return []
 
     elif strategy == "list":
@@ -1283,7 +1283,7 @@ def main(
             print(f"    Top publishers: {publisher_summary}")
 
         # Save publisher statistics after each PMID is processed
-        stats_file = "publisher_statistics.json"
+        stats_file = "data/publisher_statistics.json"
         publisher_tracker.save_to_file(stats_file)
 
         print("-" * 60)

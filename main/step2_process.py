@@ -16,7 +16,7 @@ from article_processing.llm_input_prep import prepare_csv_and_experimental_data_
 from article_processing.llm_data_extractor import LLMDataExtractor
 
 
-def get_csv_files(input_dir: str = "converted_tables") -> List[str]:
+def get_csv_files(input_dir: str = "data/converted_tables") -> List[str]:
     """
     Get all CSV files from the input directory.
 
@@ -32,7 +32,7 @@ def get_csv_files(input_dir: str = "converted_tables") -> List[str]:
 
 
 def process_all_csv_files(
-    input_dir: str = "converted_tables", output_dir: str = "cleaned_tables"
+    input_dir: str = "data/converted_tables", output_dir: str = "data/cleaned_tables"
 ) -> Dict[str, Any]:
     """
     Process all CSV files in the input directory and save cleaned versions.
@@ -100,7 +100,8 @@ def process_all_csv_files(
 
 
 def find_matching_csv_files(
-    articles_data_dir: str = "articles_data", cleaned_tables_dir: str = "cleaned_tables"
+    articles_data_dir: str = "data/articles_data",
+    cleaned_tables_dir: str = "data/cleaned_tables",
 ) -> None:
     """
     Loop through every PMID folder, figure JSON, and plot number to find matching CSVs.
@@ -285,7 +286,7 @@ def find_matching_csv_files(
                                                     # Create output filename for the mapped data JSON
                                                     json_output_filename = f"{pmid}_{figure_name}_plot{plot_number}_mapped_data.json"
                                                     json_output_path = os.path.join(
-                                                        "final_data",
+                                                        "data/final_data",
                                                         json_output_filename,
                                                     )
 
@@ -392,8 +393,8 @@ def main():
                 filename = os.path.basename(processed["input_file"])
                 print(f"  - {filename}")
 
-    articles_data_dir = "articles_data"
-    cleaned_tables_dir = "cleaned_tables"
+    articles_data_dir = "data/articles_data"
+    cleaned_tables_dir = "data/cleaned_tables"
     find_matching_csv_files(articles_data_dir, cleaned_tables_dir)
 
     # Consolidate all mapped data into a single CSV
