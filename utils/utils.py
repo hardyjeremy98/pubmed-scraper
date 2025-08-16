@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+import glob
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Any, Tuple
 from io import StringIO
@@ -166,8 +167,7 @@ def ensure_pmid_directory(pmid: str, base_dir: str = "data/articles_data") -> st
         subdir_path = os.path.join(pmid_dir, subdir)
         if not os.path.exists(subdir_path):
             os.makedirs(subdir_path, exist_ok=True)
-            
-    return pmid_dir
+
 
 @dataclass
 class ArticleMetadata:
@@ -318,9 +318,6 @@ def process_csv_file(
     Returns:
         Dictionary with processing results and metadata
     """
-    import os
-    from pathlib import Path
-
     try:
         # Load the data
         df = load_csv_auto(filepath)
@@ -463,8 +460,6 @@ def create_clean_merged_file(input_file: str, output_file: str) -> bool:
         )
     """
     try:
-        import json
-
         # Load the original extraction data
         with open(input_file, "r") as f:
             full_data = json.load(f)
@@ -531,8 +526,6 @@ def map_csv_data_to_conditions(
             }
         }
     """
-    import json
-
     try:
         # Load CSV data
         df = pd.read_csv(csv_path)
@@ -635,9 +628,6 @@ def save_mapped_data_to_json(mapped_data: Dict[str, Any], output_file: str) -> b
         bool: True if successful, False if failed
     """
     try:
-        import json
-        import os
-
         # Create output directory if it doesn't exist
         output_dir = os.path.dirname(output_file)
         if output_dir:
@@ -669,11 +659,6 @@ def consolidate_final_data_to_csv(
         True if successful, False otherwise
     """
     try:
-        import json
-        import glob
-        import pandas as pd
-        import os
-
         # Get all JSON files in the final_data directory
         json_pattern = os.path.join(final_data_dir, "*_mapped_data.json")
         json_files = glob.glob(json_pattern)

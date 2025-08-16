@@ -8,13 +8,8 @@ import re
 import os
 import json
 import pandas as pd
-from typing import Dict, Tuple, Optional
-from utils.utils import Figure
-
-
-import os
-import json
 from typing import Dict, List, Any, Optional, Tuple
+from utils.utils import Figure
 
 
 def extract_figure_text(

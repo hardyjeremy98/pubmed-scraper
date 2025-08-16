@@ -247,8 +247,6 @@ def find_matching_csv_files(
                                     response_content = llm_response["content"].strip()
                                     try:
                                         # Look for list/tuple patterns in the response
-                                        import re
-
                                         # Find patterns like [("a", "b")] or [("a", "b"), ("c", "d")]
                                         tuple_pattern = r"\[.*?\]"
                                         matches = re.findall(

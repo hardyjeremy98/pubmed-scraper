@@ -1,6 +1,7 @@
 import torch
 import cv2
 import numpy as np
+import json
 import time
 from typing import List, Tuple, Union, Optional
 from pathlib import Path
@@ -921,8 +922,6 @@ class BoundingBoxLabeler(ImageProcessorBase):
 
             # Save reference as JSON if requested
             if save_references:
-                import json
-
                 ref_filename = f"{prefix}_{base_name}_reference.json"
                 ref_path = self.output_dir / ref_filename
                 with open(ref_path, "w") as f:
@@ -1374,8 +1373,6 @@ def detect_and_label(
     # Save reference if requested
     reference_path = None
     if save_reference:
-        import json
-
         ref_filename = f"labeled_{base_name}_reference.json"
         reference_path = Path(output_dir) / ref_filename
         with open(reference_path, "w") as f:
