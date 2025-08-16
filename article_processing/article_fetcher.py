@@ -156,7 +156,18 @@ class DataFetcher:
         Get complete article data including full text, abstract, and HTML.
         """
 
-        # Try Elsevier API first if publisher is Elsevier and we have DOI
+        # Try PMC first if we have a PMCID (open access priority)
+        if article.pmcid and not article.html_content:
+            html_content = self.get_html_content(article)
+            # Extract text content from HTML if we don't have content yet
+            if html_content and not article.content:
+                content = self._extract_text_from_html(html_content)
+                if content:
+                    article.content = content
+                    article.source = "fulltext"
+                    return article
+
+        # Try Elsevier API if PMC not available and publisher is Elsevier with DOI
         if (
             article.publisher == "Elsevier"
             and article.doi
@@ -172,16 +183,6 @@ class DataFetcher:
                 article.content = elsevier_content
                 article.source = "elsevier_api"
                 return article
-
-        # Try to get HTML content first if we have a PMCID
-        if article.pmcid and not article.html_content:
-            html_content = self.get_html_content(article)
-            # Extract text content from HTML if we don't have content yet
-            if html_content and not article.content:
-                content = self._extract_text_from_html(html_content)
-                if content:
-                    article.content = content
-                    article.source = "fulltext"
 
         # If still no content, try to get abstract
         if not article.content:

@@ -13,23 +13,56 @@ from utils.utils import Figure
 
 
 def extract_figure_text(
-    pmid: str,
+    article_text: str,
     figure_number: int,
-    base_dir: str = "data/articles_data",
-) -> Dict[str, Any]:
+    figure_data: Figure,
+    pmid: str,
+    base_dir: str,
+    include_surrounding_text: bool = True,
+    context_words: int = 250,
+) -> Tuple[str, str]:
     """
-    Extract text associated with a figure from an article.
+    Extract the caption and optionally surrounding text of a desired figure.
 
     Args:
-        pmid: The PubMed ID of the article
+        article_text: Full article text content
         figure_number: The figure number to extract text for
+        figure_data: Figure object containing caption and metadata
+        pmid: The PubMed ID of the article
         base_dir: Base directory where article data is stored
+        include_surrounding_text: Whether to include surrounding text or just caption
+        context_words: Number of words to extract before and after figure reference
 
     Returns:
-        Dictionary with extracted text and metadata
+        Tuple of (extracted_text, image_path)
     """
     # Construct path to figure image
     image_path = os.path.join(base_dir, pmid, "images", f"figure_{figure_number}.jpg")
+
+    # Start with the figure caption
+    caption_text = figure_data.caption if figure_data.caption else ""
+
+    if not include_surrounding_text:
+        # Return just the caption
+        return caption_text, image_path
+
+    # Extract surrounding text using the helper function
+    preceding_text, following_text = _extract_surrounding_text(
+        article_text, figure_number, figure_data, context_words
+    )
+
+    # Combine caption with surrounding text
+    text_parts = []
+    if preceding_text:
+        text_parts.append(preceding_text)
+    if caption_text:
+        text_parts.append(caption_text)
+    if following_text:
+        text_parts.append(following_text)
+
+    combined_text = " ".join(text_parts)
+
+    return combined_text, image_path
 
 
 def _extract_surrounding_text(

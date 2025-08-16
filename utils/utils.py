@@ -168,6 +168,8 @@ def ensure_pmid_directory(pmid: str, base_dir: str = "data/articles_data") -> st
         if not os.path.exists(subdir_path):
             os.makedirs(subdir_path, exist_ok=True)
 
+    return pmid_dir
+
 
 @dataclass
 class ArticleMetadata:
@@ -204,6 +206,15 @@ class Figure:
     alt: str
     caption: str
     element: Optional[any] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "url": self.url,
+            "alt": self.alt,
+            "caption": self.caption,
+            # Note: element is excluded from serialization as it's not JSON-serializable
+        }
 
 
 # Table Reformatting Utilities

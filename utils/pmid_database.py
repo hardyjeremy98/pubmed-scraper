@@ -217,18 +217,11 @@ class PMIDDatabase:
 
         self.cursor.execute(
             """
-        UPDATE pmids 
-        SET processed = 1, 
-            processing_date = ?, 
-            publisher = ?,
-            has_metadata = ?,
-            has_figures = ?,
-            has_pdf = ?,
-            error = ?,
-            last_updated = ?
-        WHERE pmid = ?
+        INSERT OR REPLACE INTO pmids 
+        (pmid, processed, processing_date, publisher, has_metadata, has_figures, has_pdf, error, last_updated) 
+        VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?)
         """,
-            (now, publisher, has_metadata, has_figures, has_pdf, error, now, pmid),
+            (pmid, now, publisher, has_metadata, has_figures, has_pdf, error, now),
         )
 
         self.conn.commit()

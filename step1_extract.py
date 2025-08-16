@@ -247,7 +247,6 @@ def extract_tht_data(
                     f"        Using original image (segmented not available): {original_image_path}"
                 )
 
-            # Use the existing extract_figure_text function properly
             try:
                 # Extract figure number from figure_name (e.g., "figure_3" -> 3)
                 fig_num = int(figure_name.split("_")[1])
@@ -1169,7 +1168,7 @@ def main(
                 print(f"  Status: {', '.join(status_flags)}")
 
             # Display figure information if available
-            figures = db_manager.get_figures(pmid)
+            figures = pmid_status.get("figures", [])
             if figures:
                 print(f"  Contains {len(figures)} figures:")
                 for figure in figures:
@@ -1183,7 +1182,7 @@ def main(
                     )
 
                 # Display ThT plot information if available
-                tht_plots = db_manager.get_tht_plots(pmid)
+                tht_plots = pmid_status.get("tht_plots", [])
                 if tht_plots:
                     print(f"  Contains {len(tht_plots)} ThT plots:")
                     for plot in tht_plots:
