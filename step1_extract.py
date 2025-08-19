@@ -294,6 +294,7 @@ def extract_tht_data(
             print(f"        Running variables extractor...")
             variables_result = extractor.run_model(
                 text=caption_text,
+                image_path=image_to_use,
                 analysis_type="variables_extractor",
                 model=config.openai_model,
                 plot_num=plot_num,

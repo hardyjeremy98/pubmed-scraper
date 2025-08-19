@@ -46,8 +46,37 @@ class LLMDataExtractor:
         Your task is to identify which of these plots are Thioflavin T (ThT) fluorescence vs. time plots. Only consider plots that have sequentially labelled bounding boxes.
 
         The ThT time plots are line or scatter plots (not bar charts, images, or tables). They have a fluorescence y-axis and a time x-axis. The y-axis label may include "ThT", "Thioflavin T", or "fluorescence". The x-axis label may include "time", "minutes", or "seconds".
+
         Return ONLY a Python-style list of the relevant plot numbers. For example: [1, 3, 4]. If there are none, return an empty list: [].
-        
+
+        If a plot is a zoomed in/out view of another plot, only include the zoomed in plot.
+
+        Do not include any additional explanation or text.""",
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{image_base64}",
+                                "detail": "auto",
+                            },
+                        },
+                    ],
+                },
+            ]
+
+        elif message_type == "duplicate_checker":
+            messages = [
+                {
+                    "role": "system",
+                    "content": """You are given a scientific figure where each plot is labeled with a unique number and enclosed within a bounding box.
+
+        Your task is to identify if any plots are exact replicas or zoomed-in versions of others. If so, return their corresponding plot numbers as tuples in a Python list. For example: [(1, 2), (3, 4)]. If there are none, return an empty list: [].
+
+        The first item in the list should be the full plot, the second item should be the zoomed in version.
+
         Do not include any additional explanation or text.""",
                 },
                 {
@@ -188,6 +217,8 @@ class LLMDataExtractor:
             Output a list of tuples in the format:
 
             [("legend_symbol", "column_header"), ...]. For example: [("•", "Black Circles"), ("pH 3", "Black Triangles")]. If matching is not possible, return False.
+
+            Not all headers and dictionary item will have a match.
 
             Do not include any additional text or explanation.
             """,
