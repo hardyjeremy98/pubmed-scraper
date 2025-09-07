@@ -30,6 +30,9 @@ class Config:
         # Optional Elsevier API key for full text access
         self._elsevier_api_key = os.getenv("ELSEVIER_API_KEY")
 
+        # Optional Elsevier institutional token for full text access
+        self._elsevier_insttoken = os.getenv("ELSEVIER_INSTTOKEN")
+
         # Optional environment variables with defaults
         self._base_dir = os.getenv("BASE_DIR", "data/articles_data")
         self._max_retries = int(os.getenv("MAX_RETRIES", "3"))
@@ -78,6 +81,11 @@ class Config:
     def elsevier_api_key(self) -> Optional[str]:
         """Elsevier API key for full text access."""
         return self._elsevier_api_key
+
+    @property
+    def elsevier_insttoken(self) -> Optional[str]:
+        """Elsevier institutional token for full text access."""
+        return self._elsevier_insttoken
 
     @property
     def base_dir(self) -> str:
@@ -192,9 +200,22 @@ class Config:
                 print(f"  Elsevier API Key: {elsevier_key_display}")
             else:
                 print("  Elsevier API Key: Not configured")
+
+            if self.elsevier_insttoken:
+                insttoken_display = (
+                    f"{self.elsevier_insttoken[:8]}..."
+                    if len(self.elsevier_insttoken) > 8
+                    else "***"
+                )
+                print(f"  Elsevier Institutional Token: {insttoken_display}")
+            else:
+                print("  Elsevier Institutional Token: Not configured")
         else:
             print(f"  OpenAI API Key: {self.openai_api_key}")
             print(f"  Elsevier API Key: {self.elsevier_api_key or 'Not configured'}")
+            print(
+                f"  Elsevier Institutional Token: {self.elsevier_insttoken or 'Not configured'}"
+            )
 
         print(f"  Base Directory: {self.base_dir}")
         print(f"  Max Retries: {self.max_retries}")
@@ -255,6 +276,11 @@ def get_openai_api_key() -> str:
 def get_elsevier_api_key() -> Optional[str]:
     """Get Elsevier API key from configuration."""
     return get_config().elsevier_api_key
+
+
+def get_elsevier_insttoken() -> Optional[str]:
+    """Get Elsevier institutional token from configuration."""
+    return get_config().elsevier_insttoken
 
 
 def get_base_dir() -> str:

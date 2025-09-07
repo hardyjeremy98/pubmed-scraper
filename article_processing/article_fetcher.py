@@ -1,10 +1,10 @@
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 import os
 import json
 import requests
 from Bio import Entrez
 from bs4 import BeautifulSoup
-from utils.utils import ArticleMetadata, create_pmc_url
+from utils.utils import ArticleMetadata, create_pmc_url, Figure
 from article_processing.http_session import HTTPSession
 from config import Config
 
@@ -23,6 +23,12 @@ class DataFetcher:
         self._elsevier_api_key = config.elsevier_api_key
         if self._elsevier_api_key:
             print("✓ Elsevier API key configured for direct API access")
+            if config.elsevier_insttoken:
+                print("✓ Elsevier institutional token configured for enhanced access")
+            else:
+                print(
+                    "Info: No Elsevier institutional token configured. Off-network full text access may be limited."
+                )
         else:
             print(
                 "Info: No Elsevier API key configured. Full text access from Elsevier will be limited."
@@ -174,7 +180,7 @@ class DataFetcher:
             and self._elsevier_api_key
             and not article.content
         ):
-            if not getattr(self.config, "elsevier_insttoken", None):
+            if not self.config.elsevier_insttoken:
                 print(
                     "Note: No Elsevier institutional token configured; off-network full text is unlikely."
                 )
@@ -269,9 +275,10 @@ class DataFetcher:
             "httpAccept": "application/json",
             "view": "META",  # cheap probe; doesn't try to pull full text
         }
-        r = requests.get(
-            url, params=params, headers={"X-ELS-APIKey": api_key}, timeout=20
-        )
+        headers = {"X-ELS-APIKey": api_key, "User-Agent": "Literature Mining Tool"}
+        if self.config.elsevier_insttoken:
+            headers["X-ELS-Insttoken"] = self.config.elsevier_insttoken
+        r = requests.get(url, params=params, headers=headers, timeout=20)
         print("Status:", r.status_code)
         if r.status_code != 200:
             print(r.text[:500])
@@ -317,7 +324,7 @@ class DataFetcher:
             self.check_elsevier_entitlement(clean_doi, self._elsevier_api_key)
 
             base = "https://api.elsevier.com/content/article"
-            inst_token = getattr(self.config, "elsevier_insttoken", None)
+            inst_token = self.config.elsevier_insttoken
 
             def _req(path: str):
                 headers = {
@@ -570,6 +577,170 @@ class DataFetcher:
 
         except Exception as e:
             print(f"Error extracting text from Elsevier body: {e}")
+            return None
+
+    def get_elsevier_figures(self, doi: str) -> List[Figure]:
+        """
+        Extract figures from Elsevier API response for a given DOI.
+        Returns a list of Figure objects with extracted metadata.
+        """
+        if not self._elsevier_api_key:
+            return []
+
+        try:
+            clean_doi = doi.replace("https://doi.org/", "").replace(
+                "http://dx.doi.org/", ""
+            )
+
+            base = "https://api.elsevier.com/content/article"
+            inst_token = self.config.elsevier_insttoken
+
+            def _req(path: str):
+                headers = {
+                    "X-ELS-APIKey": self._elsevier_api_key,
+                    "User-Agent": "Literature Mining Tool",
+                }
+                if inst_token:
+                    headers["X-ELS-Insttoken"] = inst_token
+                params = {"view": "FULL", "httpAccept": "application/json"}
+                return self.http_session.get(
+                    f"{base}/{path}", headers=headers, params=params
+                )
+
+            # Try DOI endpoint first
+            r = _req(f"doi/{clean_doi}")
+
+            # If DOI endpoint returns 400, try to resolve to PII and re-request
+            if r.status_code == 400:
+                doi_url = f"https://doi.org/{clean_doi}"
+                try:
+                    head = self.http_session.head(doi_url, allow_redirects=True)
+                    if head.status_code == 200 and "/pii/" in head.url.lower():
+                        pii = head.url.split("/pii/")[1].split("?")[0]
+                        r = _req(f"pii/{pii}")
+                except Exception:
+                    pass
+
+            if r.status_code != 200:
+                return []
+
+            data = r.json()
+            ftr = data.get("full-text-retrieval-response")
+            if not ftr:
+                return []
+
+            figures = []
+
+            # Extract figures from objects section
+            if "objects" in ftr:
+                objects = ftr["objects"]
+
+                if isinstance(objects, dict):
+                    # Look for any objects that might contain figures
+                    for obj_type, obj_content in objects.items():
+
+                        # Check content structure
+                        if isinstance(obj_content, list):
+                            for i, item in enumerate(obj_content):
+                                if isinstance(item, dict):
+                                    # Look for figures based on type or ref
+                                    item_type = item.get("@type", "").lower()
+                                    item_ref = item.get("@ref", "").lower()
+                                    item_category = item.get("@category", "").lower()
+
+                                    if (
+                                        "fig" in item_type
+                                        or "fig" in item_ref
+                                        or "fig" in item_category
+                                        or "graphic" in item_type
+                                        or "image" in item_type
+                                    ):
+                                        figure = self._extract_elsevier_figure(
+                                            item, i + 1
+                                        )
+                                        if figure:
+                                            figures.append(figure)
+                        elif isinstance(obj_content, dict):
+                            # Check if this contains figure information
+                            if any(
+                                key
+                                for key in obj_content.keys()
+                                if "fig" in key.lower()
+                                or "graphic" in key.lower()
+                                or "image" in key.lower()
+                            ):
+                                figure = self._extract_elsevier_figure(obj_content, 1)
+                                if figure:
+                                    figures.append(figure)
+
+            return figures
+
+        except Exception as e:
+            print(f"Error extracting figures from Elsevier API for DOI {doi}: {e}")
+            return []
+
+    def _extract_elsevier_figure(self, figure_data: dict, figure_num: int):
+        """Extract Figure object from Elsevier API figure data."""
+        try:
+            caption = ""
+            url = ""
+            alt = ""
+
+            # Handle the object structure from Elsevier API
+            item_type = figure_data.get("@type", "")
+            item_ref = figure_data.get("@ref", "")
+            item_category = figure_data.get("@category", "")
+
+            # Extract caption from $ content (if available)
+            if "$" in figure_data:
+                dollar_content = figure_data["$"]
+                if isinstance(dollar_content, str):
+                    caption = dollar_content
+                elif isinstance(dollar_content, dict):
+                    # Look for caption-like content in the $ section
+                    for key, value in dollar_content.items():
+                        if "caption" in key.lower() or "title" in key.lower():
+                            caption = str(value)
+                            break
+                    # If no caption found, use the whole content as caption
+                    if not caption and dollar_content:
+                        caption = str(dollar_content)
+
+            # Also check for standard Elsevier caption fields
+            if not caption:
+                if "ce:caption" in figure_data:
+                    caption = figure_data["ce:caption"]
+                elif "caption" in figure_data:
+                    caption = figure_data["caption"]
+
+            # Use @ref as the figure identifier/alt text
+            if item_ref:
+                alt = item_ref
+                # Also try to extract figure number from ref (e.g., "fig1" -> "Figure 1")
+                import re
+
+                fig_match = re.search(r"fig\s*(\d+)", item_ref.lower())
+                if fig_match:
+                    alt = f"Figure {fig_match.group(1)}"
+            elif item_type:
+                alt = item_type
+            else:
+                alt = f"Figure {figure_num}"
+
+            # Extract image URL (this might not be available in all cases)
+            if "ce:link" in figure_data:
+                url = figure_data["ce:link"]
+            elif "@href" in figure_data:
+                url = figure_data["@href"]
+
+            # Create a figure if we have at least some meaningful content
+            if caption or alt:
+                return Figure(url=url, alt=alt, caption=caption, element=None)
+
+            return None
+
+        except Exception as e:
+            print(f"Error extracting individual figure data: {e}")
             return None
 
     def get_publisher_from_doi(self, doi: str) -> Optional[str]:

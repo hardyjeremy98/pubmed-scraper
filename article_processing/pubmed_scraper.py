@@ -75,8 +75,16 @@ class PubMedClient:
             else:
                 print(f"Could not fetch HTML for PMCID {article.pmcid}")
                 return []
+        elif article.publisher == "Elsevier" and article.doi:
+            # Try to extract figures from Elsevier API
+            print(
+                f"Attempting to extract figures from Elsevier API for DOI {article.doi}"
+            )
+            return self.data_fetcher.get_elsevier_figures(article.doi)
         else:
-            print(f"No PMCID available for PMID {pmid}, cannot extract figures")
+            print(
+                f"No PMCID available for PMID {pmid}, and not an Elsevier article with DOI. Cannot extract figures."
+            )
             return []
 
     def get_pmc_figures(self, pmc_url: str) -> List[Figure]:

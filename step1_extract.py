@@ -1164,20 +1164,6 @@ def main(
             if pmid_status.get("publisher"):
                 print(f"  Publisher: {pmid_status.get('publisher', 'Unknown')}")
 
-            # Show additional status information
-            status_flags = []
-            if pmid_status.get("has_metadata", False):
-                status_flags.append("Has metadata")
-            if pmid_status.get("has_figures", False):
-                status_flags.append("Has figures")
-            if pmid_status.get("has_pdf", False):
-                status_flags.append("Has PDF")
-            if pmid_status.get("error"):
-                status_flags.append(f"With error: {pmid_status['error']}")
-
-            if status_flags:
-                print(f"  Status: {', '.join(status_flags)}")
-
             # Display figure information if available
             figures = pmid_status.get("figures", [])
             if figures:

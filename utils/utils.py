@@ -7,6 +7,7 @@ from io import StringIO
 import json
 from pathlib import Path
 from collections import defaultdict
+from typing import Iterator, List
 
 
 class PublisherTracker:
@@ -817,3 +818,31 @@ def consolidate_final_data_to_csv(
     except Exception as e:
         print(f"Error consolidating data to CSV: {e}")
         return False
+
+
+def load_proteins_from_tsv(
+    tsv_file: str = "unique_human_proteins.tsv",
+    column_name: str = "Protein names",
+    batch_size: int = 5,
+) -> Iterator[List[str]]:
+    """
+    Load protein names from a TSV file in batches.
+
+    Args:
+        tsv_file: Path to the TSV file containing protein names
+        column_name: Name of the column in the TSV that contains protein names
+        batch_size: Number of protein names to return per batch
+
+    Yields:
+        List of protein names (batch_size long, except possibly the last batch)
+    """
+    try:
+        for chunk in pd.read_csv(
+            tsv_file, sep="\t", usecols=[column_name], chunksize=batch_size
+        ):
+            proteins = chunk[column_name].dropna().astype(str).str.strip().tolist()
+            if proteins:
+                yield proteins
+    except Exception as e:
+        print(f"Error loading proteins from TSV in batches: {e}")
+        return
