@@ -36,6 +36,7 @@ class FigureKeywordScanner:
             # Default keywords related to Thioflavin T and protein aggregation
             self.keywords = [
                 "ThT",
+                "Th-T",
                 "Thioflavin",
                 "thioflavin-T",
                 "thioflavin-t",

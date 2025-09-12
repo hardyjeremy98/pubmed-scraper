@@ -2,6 +2,9 @@ from typing import Optional, Dict, List
 import os
 import json
 import requests
+import re
+import xml.etree.ElementTree as ET
+from pathlib import Path
 from Bio import Entrez
 from bs4 import BeautifulSoup
 from utils.utils import ArticleMetadata, create_pmc_url, Figure
@@ -272,7 +275,7 @@ class DataFetcher:
         """
         url = f"https://api.elsevier.com/content/article/doi/{doi}"
         params = {
-            "httpAccept": "application/json",
+            "httpAccept": "application/xml",
             "view": "META",  # cheap probe; doesn't try to pull full text
         }
         headers = {"X-ELS-APIKey": api_key, "User-Agent": "Literature Mining Tool"}
@@ -308,7 +311,7 @@ class DataFetcher:
     def _fetch_elsevier_fulltext(self, doi: str) -> Optional[str]:
         """
         Fetch full text content from Elsevier using their Article Retrieval API.
-        Requires entitlement for paywalled items (institutional token or recognized IP).
+        Uses XML parsing to extract complete article content including figures.
         """
         if not self._elsevier_api_key:
             return None
@@ -317,133 +320,240 @@ class DataFetcher:
             clean_doi = doi.replace("https://doi.org/", "").replace(
                 "http://dx.doi.org/", ""
             )
-            print(f"Attempting to fetch full text from Elsevier for DOI: {clean_doi}")
+            print(f"Fetching Elsevier XML content for DOI: {clean_doi}")
 
-            # Check entitlement before trying to extract text
-            print("Checking Elsevier entitlement...")
-            self.check_elsevier_entitlement(clean_doi, self._elsevier_api_key)
+            # Make the API call for XML content
+            url = f"https://api.elsevier.com/content/article/doi/{clean_doi}"
+            headers = {
+                "X-ELS-APIKey": self._elsevier_api_key,
+                "Accept": "application/xml",
+            }
+            if self.config.elsevier_insttoken:
+                headers["X-ELS-Insttoken"] = self.config.elsevier_insttoken
 
-            base = "https://api.elsevier.com/content/article"
-            inst_token = self.config.elsevier_insttoken
+            params = {"httpAccept": "application/xml"}
 
-            def _req(path: str):
-                headers = {
-                    "X-ELS-APIKey": self._elsevier_api_key,
-                    "User-Agent": "Literature Mining Tool",
-                }
-                if inst_token:
-                    headers["X-ELS-Insttoken"] = inst_token
-                # Important: pass httpAccept as a query param
-                params = {"view": "FULL", "httpAccept": "application/json"}
-                return self.http_session.get(
-                    f"{base}/{path}", headers=headers, params=params
-                )
+            response = self.http_session.get(
+                url, headers=headers, params=params, timeout=60
+            )
 
-            # 1) Try DOI endpoint first
-            r = _req(f"doi/{clean_doi}")
+            # DEBUG: Check raw response size like notebook
+            print(f"Raw response size: {len(response.text)} characters")
 
-            # If DOI endpoint returns 400, try to resolve to PII and re-request
-            if r.status_code == 400:
-                doi_url = f"https://doi.org/{clean_doi}"
-                try:
-                    head = self.http_session.head(doi_url, allow_redirects=True)
-                    if head.status_code == 200 and "/pii/" in head.url.lower():
-                        pii = head.url.split("/pii/")[1].split("?")[0]
-                        print(f"Resolved DOI to PII: {pii}; retrying via PII endpoint.")
-                        r = _req(f"pii/{pii}")
-                    else:
-                        print("Could not resolve PII from DOI redirect.")
-                except Exception as e:
-                    print(f"DOI->PII resolution error: {e}")
-
-            # Handle common statuses
-            if r.status_code == 401:
+            if response.status_code == 401:
                 print("Unauthorized (401). Check API key.")
                 return None
-            if r.status_code == 403:
+            if response.status_code == 403:
                 print(
                     "Forbidden (403). Likely not entitled (need inst token or on-campus IP)."
                 )
                 return None
-            if r.status_code == 404:
-                print("Not found (404) in Article API. It may not be indexed yet.")
+            if response.status_code == 404:
+                print("Not found (404) in Article API.")
                 return None
-            if r.status_code == 429:
+            if response.status_code == 429:
                 print("Rate limit exceeded (429).")
                 return None
-            if r.status_code != 200:
-                print(f"Elsevier API request failed: {r.status_code}")
+            if response.status_code != 200:
+                print(f"Elsevier API request failed: {response.status_code}")
+                print(f"Response: {response.text[:500]}")
                 return None
 
-            data = r.json()
-            ftr = data.get("full-text-retrieval-response")
-            if not ftr:
+            # Parse the XML response
+            root = ET.fromstring(response.text)
+
+            # Define namespace mapping for Elsevier XML
+            namespaces = {
+                "dc": "http://purl.org/dc/elements/1.1/",
+                "prism": "http://prismstandard.org/namespaces/basic/2.0/",
+                "ce": "http://www.elsevier.com/xml/common/dtd",
+                "sb": "http://www.elsevier.com/xml/common/struct-bib/dtd",
+                "xlink": "http://www.w3.org/1999/xlink",
+            }
+
+            # Extract article components
+            article_parts = []
+
+            # Extract title
+            title_elem = root.find(".//dc:title", namespaces)
+            if title_elem is not None and title_elem.text:
+                article_parts.append(f"TITLE: {title_elem.text}")
+
+            # Extract authors
+            author_elems = root.findall(".//dc:creator", namespaces)
+            if author_elems:
+                authors = []
+                for author in author_elems:
+                    if author.text:
+                        authors.append(author.text)
+                if authors:
+                    article_parts.append(f"AUTHORS: {', '.join(authors)}")
+
+            # Extract journal info
+            journal_elem = root.find(".//prism:publicationName", namespaces)
+            if journal_elem is not None and journal_elem.text:
+                article_parts.append(f"JOURNAL: {journal_elem.text}")
+
+            # Extract publication date
+            date_elem = root.find(".//prism:coverDate", namespaces)
+            if date_elem is not None and date_elem.text:
+                article_parts.append(f"DATE: {date_elem.text}")
+
+            # Extract DOI
+            doi_elem = root.find(".//prism:doi", namespaces)
+            if doi_elem is not None and doi_elem.text:
+                article_parts.append(f"DOI: {doi_elem.text}")
+
+            # Extract abstract
+            abstract_elem = root.find(".//dc:description", namespaces)
+            if abstract_elem is not None and abstract_elem.text:
+                article_parts.append(f"ABSTRACT:\n{abstract_elem.text}")
+
+            # Extract keywords
+            keyword_elems = root.findall(".//ce:keyword", namespaces)
+            if keyword_elems:
+                keywords = []
+                for keyword in keyword_elems:
+                    if keyword.text:
+                        keywords.append(keyword.text)
+                if keywords:
+                    article_parts.append(f"KEYWORDS: {', '.join(keywords)}")
+
+            # COMPREHENSIVE text extraction - capture ALL text like the notebook
+            article_parts = []
+
+            # Extract title (like notebook)
+            title_elem = root.find(".//dc:title", namespaces)
+            if title_elem is not None and title_elem.text:
+                article_parts.append(f"TITLE: {title_elem.text}")
+
+            # Extract authors (like notebook)
+            article_parts.append("\nAUTHORS:")
+            author_elems = root.findall(".//dc:creator", namespaces)
+            for i, author in enumerate(author_elems, 1):
+                if author.text:
+                    article_parts.append(f"{i}. {author.text}")
+
+            # Extract journal info (like notebook)
+            journal_elem = root.find(".//prism:publicationName", namespaces)
+            if journal_elem is not None and journal_elem.text:
+                article_parts.append(f"\nJOURNAL: {journal_elem.text}")
+
+            # Extract publication date (like notebook)
+            date_elem = root.find(".//prism:coverDate", namespaces)
+            if date_elem is not None and date_elem.text:
+                article_parts.append(f"DATE: {date_elem.text}")
+
+            # Extract DOI (like notebook)
+            doi_elem = root.find(".//prism:doi", namespaces)
+            if doi_elem is not None and doi_elem.text:
+                article_parts.append(f"DOI: {doi_elem.text}")
+
+            # Extract abstract (like notebook)
+            article_parts.append("\nABSTRACT:")
+            abstract_elem = root.find(".//dc:description", namespaces)
+            if abstract_elem is not None and abstract_elem.text:
+                article_parts.append(abstract_elem.text)
+
+            # Extract keywords (like notebook)
+            article_parts.append("\nKEYWORDS:")
+            keyword_elems = root.findall(".//ce:keyword", namespaces)
+            for keyword in keyword_elems:
+                if keyword.text:
+                    article_parts.append(f"- {keyword.text}")
+
+            # Extract full article text - EXACTLY like the notebook does it
+            article_parts.append("\n" + "=" * 80)
+            article_parts.append("FULL ARTICLE TEXT:")
+            article_parts.append("=" * 80)
+
+            # CRITICAL: Extract from originalText section - this contains the full article content
+            # Try comprehensive extraction from the originalText section
+
+            # Find originalText element (no namespace prefix)
+            original_text = root.find(".//originalText")
+            if original_text is None:
+                # Fallback: search for any element ending with 'originalText'
+                for elem in root.iter():
+                    if elem.tag.endswith("originalText"):
+                        original_text = elem
+                        break
+
+            if original_text is not None:
+                # Extract all text from the originalText section using itertext()
+                # This captures ALL text content including nested elements
+                original_text_parts = []
+                for text in original_text.itertext():
+                    if text.strip():
+                        original_text_parts.append(text.strip())
+
+                if original_text_parts:
+                    print(
+                        f"✓ Extracted {len(original_text_parts)} text parts from originalText section"
+                    )
+                    article_parts.extend(original_text_parts)
+                else:
+                    print(f"⚠ originalText found but no content extracted")
+            else:
+                print(f"⚠ originalText section not found in XML")
+
+            # Look for sections and paragraphs (EXACT notebook logic) - as fallback
+            sections = root.findall(".//ce:section", namespaces)
+            if sections:
+                for section in sections:
+                    # Section title
+                    section_title = section.find(".//ce:section-title", namespaces)
+                    if section_title is not None and section_title.text:
+                        article_parts.append(f"\n=== {section_title.text.upper()} ===")
+
+                    # Section paragraphs - EXACT notebook approach
+                    paragraphs = section.findall(".//ce:para", namespaces)
+                    for para in paragraphs:
+                        # Start with paragraph's direct text (like notebook)
+                        if para.text:
+                            article_parts.append(f"\n{para.text}")
+
+                        # Also check for text in sub-elements (EXACT notebook approach)
+                        for elem in para.iter():
+                            if elem.text and elem.text.strip() and elem != para:
+                                article_parts.append(elem.text.strip())
+                        # Note: notebook uses print() with end=" " then print() - simulating that
+
+            # If no sections found, look for any paragraphs (EXACT notebook logic)
+            if not sections:
+                paragraphs = root.findall(".//ce:para", namespaces)
+                for para in paragraphs:
+                    text_content = ""
+                    if para.text:
+                        text_content += para.text
+
+                    # Collect text from all sub-elements (EXACT notebook approach)
+                    for elem in para.iter():
+                        if elem.text and elem.text.strip():
+                            text_content += elem.text
+                        if elem.tail and elem.tail.strip():
+                            text_content += elem.tail
+
+                    if text_content.strip():
+                        article_parts.append(f"\n{text_content.strip()}")
+
+            # Add the closing separator like notebook
+            article_parts.append("\n" + "=" * 80)
+
+            full_text = "\n".join(article_parts)
+
+            if full_text.strip():
                 print(
-                    "No full-text-retrieval-response present. Probably not entitled to full text."
+                    f"✓ Successfully fetched Elsevier XML content ({len(full_text)} characters)"
                 )
+                return full_text
+            else:
+                print("No content extracted from XML")
                 return None
 
-            parts = []
-
-            # Title
-            core = ftr.get("coredata", {}) or {}
-            title = core.get("dc:title")
-            if title:
-                parts.append(f"Title: {title}")
-
-            # Abstract
-            abstract = core.get("dc:description")
-            if abstract:
-                parts.append(
-                    f"Abstract: {abstract if isinstance(abstract, str) else str(abstract)}"
-                )
-
-            # Authors (defensive)
-            authors = ftr.get("authors", {}).get("author")
-            if authors:
-                if not isinstance(authors, list):
-                    authors = [authors]
-                names = []
-                for a in authors:
-                    if isinstance(a, dict):
-                        gn = a.get("ce:given-name", "")
-                        sn = a.get("ce:surname", "")
-                        nm = " ".join([gn, sn]).strip()
-                        if nm:
-                            names.append(nm)
-                if names:
-                    parts.append("Authors: " + ", ".join(names))
-
-            # Try to extract actual full text
-            grabbed_any_fulltext = False
-
-            if isinstance(ftr.get("originalText"), str):
-                parts.append(ftr["originalText"])
-                grabbed_any_fulltext = True
-
-            body_text = self._extract_elsevier_body_text(ftr)
-            if body_text:
-                parts.append(body_text)
-                grabbed_any_fulltext = True
-
-            # Optional: captions from objects
-            if "objects" in ftr:
-                obj_text = self._extract_elsevier_objects_text(ftr["objects"])
-                if obj_text:
-                    parts.append(obj_text)
-
-            if not grabbed_any_fulltext:
-                print(
-                    "Entitled full text not present in response. Likely not entitled with current IP/token."
-                )
-                return None
-
-            full_text = "\n\n".join(p for p in parts if p)
-            print(
-                f"✓ Successfully fetched Elsevier full text ({len(full_text)} characters)"
-            )
-            return full_text
-
+        except ET.ParseError as e:
+            print(f"XML parsing error: {e}")
+            return None
         except Exception as e:
             print(f"Error fetching from Elsevier API for DOI {doi}: {e}")
             return None
@@ -581,8 +691,8 @@ class DataFetcher:
 
     def get_elsevier_figures(self, doi: str) -> List[Figure]:
         """
-        Extract figures from Elsevier API response for a given DOI.
-        Returns a list of Figure objects with extracted metadata.
+        Extract figures from Elsevier XML response for a given DOI.
+        Returns a list of Figure objects with extracted metadata and URLs.
         """
         if not self._elsevier_api_key:
             return []
@@ -591,157 +701,346 @@ class DataFetcher:
             clean_doi = doi.replace("https://doi.org/", "").replace(
                 "http://dx.doi.org/", ""
             )
+            print(f"Extracting figures from Elsevier XML for DOI: {clean_doi}")
 
-            base = "https://api.elsevier.com/content/article"
-            inst_token = self.config.elsevier_insttoken
+            # Make the API call for XML content
+            url = f"https://api.elsevier.com/content/article/doi/{clean_doi}"
+            headers = {
+                "X-ELS-APIKey": self._elsevier_api_key,
+                "Accept": "application/xml",
+            }
+            if self.config.elsevier_insttoken:
+                headers["X-ELS-Insttoken"] = self.config.elsevier_insttoken
 
-            def _req(path: str):
-                headers = {
-                    "X-ELS-APIKey": self._elsevier_api_key,
-                    "User-Agent": "Literature Mining Tool",
+            params = {"httpAccept": "application/xml"}
+
+            response = self.http_session.get(
+                url, headers=headers, params=params, timeout=60
+            )
+
+            if response.status_code != 200:
+                print(f"Failed to fetch XML for figures: {response.status_code}")
+                return []
+
+            # Parse the XML response
+            root = ET.fromstring(response.text)
+
+            # Define namespace mapping for Elsevier XML
+            namespaces = {
+                "dc": "http://purl.org/dc/elements/1.1/",
+                "prism": "http://prismstandard.org/namespaces/basic/2.0/",
+                "ce": "http://www.elsevier.com/xml/common/dtd",
+                "sb": "http://www.elsevier.com/xml/common/struct-bib/dtd",
+                "xlink": "http://www.w3.org/1999/xlink",
+            }
+
+            # Get PII for constructing image URLs
+            pii = self._extract_pii_from_xml_or_doi(root, clean_doi)
+
+            # Find all figure elements
+            figures = []
+            figure_elements = root.findall(".//ce:figure", namespaces)
+
+            # Process figures sequentially, but keep track of potential graphical abstracts
+            normal_figures = []
+            graphical_abstract = None
+
+            for fig in figure_elements:
+                # Get figure ID
+                fig_id = fig.get("id", "")
+                is_graphical_abstract = False
+
+                # First check for label to determine if this is a real figure with a number
+                is_numbered_figure = False
+                label_elem = fig.find(".//ce:label", namespaces)
+                if label_elem is not None and label_elem.text:
+                    label_text = label_elem.text.strip()
+                    # Check if it's a numbered figure (like "Fig. 1" or "Figure 2")
+                    if re.search(
+                        r"fig\.?\s*\d+|figure\s*\d+", label_text, re.IGNORECASE
+                    ):
+                        is_numbered_figure = True
+                    # Check if it's explicitly labeled as graphical abstract
+                    if "abstract" in label_text.lower():
+                        is_graphical_abstract = True
+
+                # Extract caption to help determine if it's a graphical abstract
+                caption_elem = fig.find(".//ce:caption", namespaces)
+                caption = ""
+                if caption_elem is not None:
+                    for elem in caption_elem.iter():
+                        if elem.text:
+                            caption += elem.text
+                        if elem.tail:
+                            caption += elem.tail
+                    caption = caption.strip()
+
+                # If caption contains "graphical abstract", mark as graphical abstract
+                if caption and "graphical abstract" in caption.lower():
+                    is_graphical_abstract = True
+
+                # Only use ID-based detection as a fallback if we haven't determined it's a numbered figure
+                if not is_numbered_figure and not is_graphical_abstract:
+                    # Check ID patterns typical of graphical abstracts
+                    if fig_id.lower() == "ga" or fig_id.startswith("ga"):
+                        is_graphical_abstract = True
+
+                # If no caption, use label to create one
+                if not caption and label_elem is not None and label_elem.text:
+                    caption = f"Figure {label_elem.text.strip()}"
+
+                # If still no caption, use alt-text
+                if not caption:
+                    alt_elem = fig.find(".//ce:alt-text", namespaces)
+                    if alt_elem is not None and alt_elem.text:
+                        caption = alt_elem.text.strip()
+                    else:
+                        caption = "No caption available"
+
+                # Store this figure data in appropriate list
+                figure_data = {
+                    "element": fig,
+                    "id": fig_id,
+                    "caption": caption,
+                    "is_graphical_abstract": is_graphical_abstract,
                 }
-                if inst_token:
-                    headers["X-ELS-Insttoken"] = inst_token
-                params = {"view": "FULL", "httpAccept": "application/json"}
-                return self.http_session.get(
-                    f"{base}/{path}", headers=headers, params=params
+
+                if is_graphical_abstract:
+                    graphical_abstract = figure_data
+                else:
+                    normal_figures.append(figure_data)
+
+            # Now create Figure objects with sequential numbering for normal figures
+            for i, fig_data in enumerate(normal_figures, 1):
+                fig_number = str(i)
+                ref_id = f"gr{i}"
+
+                # Construct the image URL in PII format
+                if pii:
+                    image_url = f"pii:{pii}/{ref_id}"
+                else:
+                    image_url = f"doi:{clean_doi}/{ref_id}"
+
+                # Create Figure object
+                figure = Figure(
+                    url=image_url,
+                    alt=f"Figure {fig_number}",
+                    caption=fig_data["caption"],
+                    element=None,  # We don't need the XML element stored
                 )
 
-            # Try DOI endpoint first
-            r = _req(f"doi/{clean_doi}")
+                figures.append(figure)
+                print(
+                    f"  Found Figure {fig_number} (ID: {fig_data['id']}, Ref: {ref_id}): {fig_data['caption'][:100]}..."
+                )
 
-            # If DOI endpoint returns 400, try to resolve to PII and re-request
-            if r.status_code == 400:
-                doi_url = f"https://doi.org/{clean_doi}"
-                try:
-                    head = self.http_session.head(doi_url, allow_redirects=True)
-                    if head.status_code == 200 and "/pii/" in head.url.lower():
-                        pii = head.url.split("/pii/")[1].split("?")[0]
-                        r = _req(f"pii/{pii}")
-                except Exception:
-                    pass
+            # Add graphical abstract at the end if present
+            if graphical_abstract:
+                if pii:
+                    image_url = f"pii:{pii}/ga1"
+                else:
+                    image_url = f"doi:{clean_doi}/ga1"
 
-            if r.status_code != 200:
-                return []
+                figure = Figure(
+                    url=image_url,
+                    alt="Graphical Abstract",
+                    caption=graphical_abstract["caption"],
+                    element=None,
+                )
 
-            data = r.json()
-            ftr = data.get("full-text-retrieval-response")
-            if not ftr:
-                return []
+                figures.append(figure)
+                print(
+                    f"  Found Graphical Abstract (ID: {graphical_abstract['id']}): {graphical_abstract['caption'][:100]}..."
+                )
 
-            figures = []
-
-            # Extract figures from objects section
-            if "objects" in ftr:
-                objects = ftr["objects"]
-
-                if isinstance(objects, dict):
-                    # Look for any objects that might contain figures
-                    for obj_type, obj_content in objects.items():
-
-                        # Check content structure
-                        if isinstance(obj_content, list):
-                            for i, item in enumerate(obj_content):
-                                if isinstance(item, dict):
-                                    # Look for figures based on type or ref
-                                    item_type = item.get("@type", "").lower()
-                                    item_ref = item.get("@ref", "").lower()
-                                    item_category = item.get("@category", "").lower()
-
-                                    if (
-                                        "fig" in item_type
-                                        or "fig" in item_ref
-                                        or "fig" in item_category
-                                        or "graphic" in item_type
-                                        or "image" in item_type
-                                    ):
-                                        figure = self._extract_elsevier_figure(
-                                            item, i + 1
-                                        )
-                                        if figure:
-                                            figures.append(figure)
-                        elif isinstance(obj_content, dict):
-                            # Check if this contains figure information
-                            if any(
-                                key
-                                for key in obj_content.keys()
-                                if "fig" in key.lower()
-                                or "graphic" in key.lower()
-                                or "image" in key.lower()
-                            ):
-                                figure = self._extract_elsevier_figure(obj_content, 1)
-                                if figure:
-                                    figures.append(figure)
-
+            print(f"✓ Extracted {len(figures)} figures from Elsevier XML")
             return figures
 
+        except ET.ParseError as e:
+            print(f"XML parsing error while extracting figures: {e}")
+            return []
         except Exception as e:
             print(f"Error extracting figures from Elsevier API for DOI {doi}: {e}")
             return []
 
-    def _extract_elsevier_figure(self, figure_data: dict, figure_num: int):
-        """Extract Figure object from Elsevier API figure data."""
+    def _extract_pii_from_xml_or_doi(
+        self, root: ET.Element, clean_doi: str
+    ) -> Optional[str]:
+        """Extract PII from XML or derive from DOI for image URL construction."""
         try:
-            caption = ""
-            url = ""
-            alt = ""
+            # Try to extract PII from XML
+            namespaces = {
+                "prism": "http://prismstandard.org/namespaces/basic/2.0/",
+                "ce": "http://www.elsevier.com/xml/common/dtd",
+            }
 
-            # Handle the object structure from Elsevier API
-            item_type = figure_data.get("@type", "")
-            item_ref = figure_data.get("@ref", "")
-            item_category = figure_data.get("@category", "")
+            # Look for PII in various places in the XML
+            pii_elem = root.find(".//prism:pii", namespaces)
+            if pii_elem is not None and pii_elem.text:
+                return pii_elem.text
 
-            # Extract caption from $ content (if available)
-            if "$" in figure_data:
-                dollar_content = figure_data["$"]
-                if isinstance(dollar_content, str):
-                    caption = dollar_content
-                elif isinstance(dollar_content, dict):
-                    # Look for caption-like content in the $ section
-                    for key, value in dollar_content.items():
-                        if "caption" in key.lower() or "title" in key.lower():
-                            caption = str(value)
-                            break
-                    # If no caption found, use the whole content as caption
-                    if not caption and dollar_content:
-                        caption = str(dollar_content)
+            # Also try the ce namespace
+            pii_elem = root.find(".//ce:pii", namespaces)
+            if pii_elem is not None and pii_elem.text:
+                return pii_elem.text
 
-            # Also check for standard Elsevier caption fields
-            if not caption:
-                if "ce:caption" in figure_data:
-                    caption = figure_data["ce:caption"]
-                elif "caption" in figure_data:
-                    caption = figure_data["caption"]
+            # Try to extract from aggregationType attribute or similar
+            for elem in root.iter():
+                if "pii" in str(elem.attrib).lower():
+                    for attr_name, attr_value in elem.attrib.items():
+                        if "pii" in attr_name.lower() and attr_value:
+                            return attr_value
 
-            # Use @ref as the figure identifier/alt text
-            if item_ref:
-                alt = item_ref
-                # Also try to extract figure number from ref (e.g., "fig1" -> "Figure 1")
-                import re
+            # If not found in XML, try to resolve PII from DOI redirect
+            doi_url = f"https://doi.org/{clean_doi}"
+            try:
+                head_response = self.http_session.head(doi_url, allow_redirects=True)
+                if (
+                    head_response.status_code == 200
+                    and "/pii/" in head_response.url.lower()
+                ):
+                    pii = (
+                        head_response.url.split("/pii/")[1].split("?")[0].split("/")[0]
+                    )
+                    return pii
+            except Exception as e:
+                print(f"Failed to resolve PII from DOI redirect: {e}")
 
-                fig_match = re.search(r"fig\s*(\d+)", item_ref.lower())
-                if fig_match:
-                    alt = f"Figure {fig_match.group(1)}"
-            elif item_type:
-                alt = item_type
-            else:
-                alt = f"Figure {figure_num}"
+            # Fallback: try a different approach by making a test API call to get PII
+            try:
+                test_url = f"https://api.elsevier.com/content/article/doi/{clean_doi}"
+                headers = {
+                    "X-ELS-APIKey": self._elsevier_api_key,
+                    "Accept": "application/json",
+                }
+                if self.config.elsevier_insttoken:
+                    headers["X-ELS-Insttoken"] = self.config.elsevier_insttoken
 
-            # Extract image URL (this might not be available in all cases)
-            if "ce:link" in figure_data:
-                url = figure_data["ce:link"]
-            elif "@href" in figure_data:
-                url = figure_data["@href"]
+                params = {"view": "META"}
+                response = self.http_session.get(
+                    test_url, headers=headers, params=params, timeout=30
+                )
 
-            # Create a figure if we have at least some meaningful content
-            if caption or alt:
-                return Figure(url=url, alt=alt, caption=caption, element=None)
+                if response.status_code == 200:
+                    data = response.json()
+                    ftr = data.get("full-text-retrieval-response", {})
+                    core = ftr.get("coredata", {})
 
+                    # Look for PII in the response
+                    pii = core.get("pii")
+                    if pii:
+                        return pii
+
+                    # Also check if it's in aggregationType or elsewhere
+                    for key, value in core.items():
+                        if "pii" in key.lower() and value:
+                            return value
+
+            except Exception as e:
+                print(f"Failed to get PII from META view: {e}")
+
+            print(f"Could not extract PII for DOI {clean_doi}")
             return None
 
         except Exception as e:
-            print(f"Error extracting individual figure data: {e}")
+            print(f"Error extracting PII: {e}")
             return None
+
+    def download_elsevier_image(
+        self, image_url: str, save_path: str, view: str = "high"
+    ) -> bool:
+        """
+        Download an Elsevier image using the Object API.
+
+        Args:
+            image_url: URL in format "pii:PII/ref" or "doi:DOI/ref"
+            save_path: Path where to save the downloaded image
+            view: Image quality ("thumbnail", "standard", "high")
+
+        Returns:
+            True if download successful, False otherwise
+        """
+        if not self._elsevier_api_key:
+            print("No Elsevier API key available for image download")
+            return False
+
+        try:
+            # Parse the image URL
+            if image_url.startswith("pii:"):
+                # Format: pii:S0301462225001140/gr1
+                parts = image_url[4:].split("/")  # Remove "pii:" prefix
+                if len(parts) >= 2:
+                    pii = parts[0]
+                    ref = parts[1]
+                    url_path = f"pii/{pii}/ref/{ref}"
+                else:
+                    print(f"Invalid PII format: {image_url}")
+                    return False
+            elif image_url.startswith("doi:"):
+                # Format: doi:10.1016/j.bpc.2025.107502/gr1
+                parts = image_url[4:].split("/")  # Remove "doi:" prefix
+                if len(parts) >= 4:  # doi:10.1016/j.bpc.2025.107502/gr1
+                    doi_part = "/".join(parts[:-1])  # Reconstruct DOI
+                    ref = parts[-1]
+                    url_path = f"doi/{doi_part}/ref/{ref}"
+                else:
+                    print(f"Invalid DOI format: {image_url}")
+                    return False
+            else:
+                print(f"Unsupported image URL format: {image_url}")
+                return False
+
+            # Construct the API request
+            base_url = "https://api.elsevier.com/content/object"
+            full_url = f"{base_url}/{url_path}"
+
+            headers = {"X-ELS-APIKey": self._elsevier_api_key, "Accept": "*/*"}
+            if self.config.elsevier_insttoken:
+                headers["X-ELS-Insttoken"] = self.config.elsevier_insttoken
+
+            params = {"httpAccept": "image/jpeg", "view": view}
+
+            print(f"Downloading image from: {full_url}")
+            response = self.http_session.get(
+                full_url, headers=headers, params=params, timeout=60
+            )
+
+            if response.status_code == 200 and response.headers.get(
+                "Content-Type", ""
+            ).startswith("image/"):
+                # Determine file extension from content type
+                content_type = response.headers.get("Content-Type", "image/jpeg")
+                ext = content_type.split("/")[-1]
+                if ext == "jpeg":
+                    ext = "jpg"  # Standardize jpeg to jpg
+
+                # Ensure save path has correct extension, removing any query parameters
+                save_path = Path(save_path)
+                if save_path.suffix:
+                    # Remove any query parameters from existing filename
+                    clean_name = save_path.stem.split("?")[0]
+                    save_path = save_path.parent / f"{clean_name}.{ext}"
+                else:
+                    save_path = save_path.with_suffix(f".{ext}")
+
+                # Create directory if it doesn't exist
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+
+                # Save the image
+                with open(save_path, "wb") as f:
+                    f.write(response.content)
+
+                print(f"✓ Saved image to {save_path}")
+                return True
+            else:
+                print(f"Failed to download image: HTTP {response.status_code}")
+                if response.text:
+                    print(f"Response: {response.text[:200]}")
+                return False
+
+        except Exception as e:
+            print(f"Error downloading Elsevier image {image_url}: {e}")
+            return False
 
     def get_publisher_from_doi(self, doi: str) -> Optional[str]:
         """

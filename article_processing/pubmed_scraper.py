@@ -1,5 +1,6 @@
 import os
 from typing import List, Optional
+from pathlib import Path
 from Bio import Entrez
 
 from utils.utils import create_pmc_url, ensure_pmid_directory
@@ -59,7 +60,35 @@ class PubMedClient:
 
     def download_image(self, img_url: str, filename: str, pmid: str) -> Optional[str]:
         """Download image from URL."""
-        return self.image_downloader.download_image(img_url, filename, pmid)
+        # Check if this is an Elsevier image URL (starts with "pii:" or "doi:")
+        if img_url.startswith(("pii:", "doi:")):
+            return self.download_elsevier_image(img_url, filename, pmid)
+        else:
+            return self.image_downloader.download_image(img_url, filename, pmid)
+
+    def download_elsevier_image(
+        self, img_url: str, filename: str, pmid: str
+    ) -> Optional[str]:
+        """Download Elsevier image using the Object API."""
+        try:
+            # Create PMID-specific directory
+            pmid_dir = Path(self.base_dir) / pmid / "images"
+            pmid_dir.mkdir(parents=True, exist_ok=True)
+
+            # Construct full file path
+            filepath = pmid_dir / filename
+
+            # Use the data_fetcher's download method
+            success = self.data_fetcher.download_elsevier_image(img_url, str(filepath))
+
+            if success:
+                return str(filepath)
+            else:
+                return None
+
+        except Exception as e:
+            print(f"Error downloading Elsevier image {img_url}: {e}")
+            return None
 
     def get_article_figures(self, pmid: str) -> List[Figure]:
         """Get figures for an article by PMID using cached HTML when possible."""

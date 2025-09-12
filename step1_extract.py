@@ -593,7 +593,7 @@ def process_figure_bounding_boxes(
 
         # Initialize plot detector with configured confidence threshold
         detector = PlotDetector(
-            model_path="plot_detector1.pt",
+            model_path="plot_detector2.pt",
             confidence_threshold=config.plot_detection_confidence,
             device="auto",
         )
@@ -916,21 +916,32 @@ def process_article_figures_and_pages(
                         "keywords_found": scan_result.keyword_matches[figure_number],
                     }
 
-                    # Download the figure image
-                    if figure.url:
-                        try:
-                            file_ext = (
-                                figure.url.split(".")[-1]
-                                if "." in figure.url.split("/")[-1]
-                                else "jpg"
-                            )
-                            filename = f"figure_{figure_number}.{file_ext}"
-                            pubmed_client.download_image(figure.url, filename, pmid)
+                    # Download the figure image, with explicit messages for all cases
+                    if not figure.url:
+                        print(
+                            f"    ⚠ No URL for figure {figure_number}, cannot download."
+                        )
+                        continue
+                    try:
+                        file_ext = (
+                            figure.url.split(".")[-1]
+                            if "." in figure.url.split("/")[-1]
+                            else "jpg"
+                        )
+                        filename = f"figure_{figure_number}.{file_ext}"
+                        download_result = pubmed_client.download_image(
+                            figure.url, filename, pmid
+                        )
+                        if download_result:
                             print(f"    ✓ Downloaded figure {figure_number}")
-                        except Exception as download_error:
+                        else:
                             print(
-                                f"    ⚠ Failed to download figure {figure_number}: {download_error}"
+                                f"    ⚠ Failed to download figure {figure_number}: download returned None or False (see above for details)"
                             )
+                    except Exception as download_error:
+                        print(
+                            f"    ⚠ Exception while downloading figure {figure_number}: {download_error}"
+                        )
 
         except Exception as scan_error:
             print(f"  ⚠ Figure scanning failed for {pmid}: {scan_error}")
@@ -1080,14 +1091,14 @@ def main(
     if strategy == "json":
         # Load PMIDs from JSON file
         try:
-            with open("data/unique_pmids.json", "r") as f:
+            with open("unique_pmids.json", "r") as f:
                 pmids = json.load(f)
-            print(f"Loaded {len(pmids)} PMIDs from data/unique_pmids.json")
+            print(f"Loaded {len(pmids)} PMIDs from unique_pmids.json")
         except FileNotFoundError:
-            print("Error: data/unique_pmids.json file not found")
+            print("Error: unique_pmids.json file not found")
             return []
         except json.JSONDecodeError:
-            print("Error: Invalid JSON format in data/unique_pmids.json")
+            print("Error: Invalid JSON format in unique_pmids.json")
             return []
 
     elif strategy == "list":
@@ -1428,14 +1439,16 @@ if __name__ == "__main__":
     # Example usage - modify these calls as needed:
 
     # Strategy 1: Use JSON file (default behavior)
-    # results = main(strategy="json")
+    results = main(strategy="json", skip_processed=True)
 
     # Strategy 2: Use specific PMID list
-    results = main(
-        strategy="list",
-        pmid_list=["40749445", "40678799", "19258323", "18350169"],
-        skip_processed=False,  # Set to False to reprocess already processed articles
-    )
+    # results = main(
+    #     strategy="list",
+    #     pmid_list=[
+    #         "22996070",
+    #     ],  # "12684011", "12150948", "24316228", "40749445", "40678799", "19258323", "18350169"
+    #     skip_processed=False,  # Set to False to reprocess already processed articles
+    # )
 
     # Strategy 3: Use PubMed search
     # search_term = "(protein aggregation) AND (ThT OR thioflavin)"
