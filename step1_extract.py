@@ -134,6 +134,48 @@ def identify_tht_plots(
     return result
 
 
+def _check_missing_key_variables(extracted_data: Dict) -> bool:
+    """
+    Check if any key variables (protein, protein_concentration, temperature, pH)
+    are missing from the extracted data.
+
+    Args:
+        extracted_data: Dictionary containing plot data with constants and variables
+
+    Returns:
+        True if any key variables are missing, False otherwise
+    """
+    required_keys = {"protein", "protein_concentration", "temperature", "ph"}
+
+    for plot_data in extracted_data.values():
+        if not isinstance(plot_data, dict):
+            continue
+
+        constants = plot_data.get("constants", {})
+        variables = plot_data.get("variables", {})
+
+        # Collect all keys from both constants and variables (case insensitive)
+        all_keys = set()
+
+        # Add constants keys
+        for key in constants.keys():
+            all_keys.add(key.lower())
+
+        # Add variables keys from all symbols
+        for symbol_data in variables.values():
+            if isinstance(symbol_data, dict):
+                for key in symbol_data.keys():
+                    all_keys.add(key.lower())
+
+        # Check if any required key is missing
+        missing_keys = required_keys - all_keys
+        if missing_keys:
+            print(f"    Missing key variables: {missing_keys}")
+            return True
+
+    return False
+
+
 def extract_tht_data(
     pmid: str,
     original_image_path: str,
@@ -358,6 +400,70 @@ def extract_tht_data(
 
         # Set the final results
         result["extracted_data"] = all_extracted_data
+
+        # Check for missing key variables and rerun constants extractor with full article if needed
+        if successful_extractions > 0 and result["extracted_data"] and article_content:
+            if _check_missing_key_variables(result["extracted_data"]):
+                print(
+                    "    ⚠ Key variables missing, rerunning constants extractor with full article text..."
+                )
+
+                # Rerun constants extractor for each plot with full article text
+                for plot_num in tht_plot_numbers:
+                    if str(plot_num) in result["extracted_data"]:
+                        print(
+                            f"      Rerunning constants extractor for plot {plot_num} with full article..."
+                        )
+
+                        # Run constants extractor with full article text
+                        fallback_constants_result = extractor.run_model(
+                            text=article_content,  # Use full article instead of context_text
+                            image_path=None,
+                            analysis_type="constants_extractor",
+                            model=config.openai_model,
+                            plot_num=plot_num,
+                        )
+
+                        # Process the fallback result
+                        if fallback_constants_result["success"]:
+                            try:
+                                fallback_constants_data = _parse_json_response(
+                                    fallback_constants_result["content"]
+                                )
+
+                                # Update the constants in the extracted data
+                                if result["extracted_data"][str(plot_num)]["constants"]:
+                                    # Merge with existing constants (fallback data takes precedence)
+                                    existing_constants = result["extracted_data"][
+                                        str(plot_num)
+                                    ]["constants"]
+                                    existing_constants.update(fallback_constants_data)
+                                else:
+                                    # Replace if no existing constants
+                                    result["extracted_data"][str(plot_num)][
+                                        "constants"
+                                    ] = fallback_constants_data
+
+                                print(
+                                    f"        ✓ Fallback constants extraction successful for plot {plot_num}"
+                                )
+
+                                # Update LLM responses to include fallback attempt
+                                for response_entry in result["llm_responses"]:
+                                    if response_entry["plot_number"] == plot_num:
+                                        response_entry["fallback_constants_result"] = (
+                                            fallback_constants_result
+                                        )
+                                        break
+
+                            except (json.JSONDecodeError, Exception) as e:
+                                print(
+                                    f"        ✗ Fallback constants extraction parsing error for plot {plot_num}: {e}"
+                                )
+                        else:
+                            print(
+                                f"        ✗ Fallback constants extraction failed for plot {plot_num}: {fallback_constants_result.get('error', 'Unknown error')}"
+                            )
 
         # Always save the data extraction results, even if all extractions failed
         article_dir = Path(base_dir) / pmid
@@ -1439,16 +1545,16 @@ if __name__ == "__main__":
     # Example usage - modify these calls as needed:
 
     # Strategy 1: Use JSON file (default behavior)
-    results = main(strategy="json", skip_processed=True)
+    # results = main(strategy="json", skip_processed=True)
 
     # Strategy 2: Use specific PMID list
-    # results = main(
-    #     strategy="list",
-    #     pmid_list=[
-    #         "22996070",
-    #     ],  # "12684011", "12150948", "24316228", "40749445", "40678799", "19258323", "18350169"
-    #     skip_processed=False,  # Set to False to reprocess already processed articles
-    # )
+    results = main(
+        strategy="list",
+        pmid_list=[
+            "25996685",
+        ],  # "12684011", "12150948", "24316228", "40749445", "40678799", "19258323", "18350169"
+        skip_processed=False,  # Set to False to reprocess already processed articles
+    )
 
     # Strategy 3: Use PubMed search
     # search_term = "(protein aggregation) AND (ThT OR thioflavin)"

@@ -438,9 +438,11 @@ def merge_constants_and_variables(extracted_data: Dict) -> Dict:
             # Start with constants as base
             condition = constants.copy()
 
-            # Override/add with variable-specific data
+            # Override/add with variable-specific data only if the variable data is not empty
             for key, value in variable_data.items():
-                condition[key] = value
+                # Only override constants if the variable has actual data (not empty list/null)
+                if value and value != [] and value is not None:
+                    condition[key] = value
 
             total_conditions[symbol] = condition
 
